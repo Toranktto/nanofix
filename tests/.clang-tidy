@@ -1,0 +1,10 @@
+# Tests inherit the root checks. Two test-only relaxations:
+#   * bugprone-unchecked-optional-access: can't see through GoogleTest's
+#     ASSERT_TRUE(opt.has_value()) guard, so it flags the following .value();
+#     the guard is real.
+#   * bugprone-random-generator-seed: tests seed RNGs with a fixed value on
+#     purpose, so failures reproduce.
+InheritParentConfig: true
+Checks: >
+  -bugprone-unchecked-optional-access,
+  -bugprone-random-generator-seed

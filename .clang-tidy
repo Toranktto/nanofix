@@ -1,0 +1,29 @@
+# clang-tidy for nanofix. Bug-finding + performance + portability + the
+# static analyzer, as errors. Header diagnostics are scoped to the
+# hand-written library headers (generated headers excluded).
+#
+# Three disabled checks, each structural rather than a silenced finding:
+#   * portability-avoid-pragma-once: every header uses `#pragma once`.
+#   * bugprone-exception-escape: the noexcept callback APIs
+#     (group_view::for_each, for_each_message) get instantiated with user or
+#     GoogleTest lambdas that may throw; the check fires on the instantiation,
+#     not a library defect.
+#   * bugprone-easily-swappable-parameters: no bug signal (flags any two
+#     adjacent same-type params).
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  performance-*,
+  portability-*,
+  -portability-avoid-pragma-once,
+  clang-analyzer-*
+
+WarningsAsErrors: '*'
+
+# Enumerate the hand-written detail headers so the generated detail/fields.hpp
+# (~6500 lines) is not linted.
+HeaderFilterRegex: 'include/nanofix\.hpp$|include/nanofix/detail/(config|diagnostics|simd|numeric|writer|value_iter|reader|index|typed)\.hpp$'
+
+FormatStyle: file

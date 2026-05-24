@@ -1,0 +1,68 @@
+# libFuzzer dictionary for nanofix fuzz_reader.
+# Tokens the mutator splices into inputs to reach deeper coverage faster
+# than random byte mutation alone.
+
+# --- Field separator ---
+soh="\x01"
+
+# --- BeginString values ---
+fix42="FIX.4.2"
+fix43="FIX.4.3"
+fix44="FIX.4.4"
+fixt11="FIXT.1.1"
+
+# --- Header tag prefixes ---
+t_begin_string="8="
+t_body_length="9="
+t_msg_type="35="
+t_sender="49="
+t_target="56="
+t_seqnum="34="
+t_sending_time="52="
+t_checksum="10="
+
+# --- Common BodyLength values ---
+bl_short="9=00075\x01"
+bl_med="9=00500\x01"
+bl_long="9=999999\x01"
+bl_zero="9=0\x01"
+
+# --- MsgType field complete tokens ---
+mt_heartbeat="35=0\x01"
+mt_test="35=1\x01"
+mt_logout="35=5\x01"
+mt_logon="35=A\x01"
+mt_new_order="35=D\x01"
+mt_exec="35=8\x01"
+mt_cancel="35=F\x01"
+mt_md_snap="35=W\x01"
+mt_md_incr="35=X\x01"
+mt_md_req="35=V\x01"
+
+# --- Data-length pairs (RawData/SecureData/SignatureLength) ---
+t_raw_len="95="
+t_raw_data="96="
+t_secure_len="90="
+t_secure_data="91="
+t_sig_len="93="
+t_sig="89="
+
+# --- Repeating-group count tags ---
+t_no_md_entries="268="
+t_no_related_sym="146="
+t_no_party_ids="453="
+t_no_msg_types="384="
+
+# --- Timestamp formats ---
+ts_ms="20240115-09:30:00.000"
+ts_us="20240115-09:30:00.000000"
+ts_ns="20240115-09:30:00.000000000"
+
+# --- Checksum trailer patterns ---
+cs_zero="10=000\x01"
+cs_max="10=255\x01"
+cs_mid="10=128\x01"
+
+# --- Pre-composed minimum FIX frames ---
+min_frame="8=FIX.4.4\x019=12\x0135=0\x0110=000\x01"
+min_t11="8=FIXT.1.1\x019=14\x0135=A\x0110=000\x01"

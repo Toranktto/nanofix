@@ -1,0 +1,9 @@
+[requires]
+nanofix/1.0.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[layout]
+cmake_layout

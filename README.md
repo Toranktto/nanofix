@@ -1,767 +1,329 @@
-High Frequency FIX — C++ Library for Financial Information Exchange Protocol {#mainpage}
-==========================================================================
-
-## Introduction
-
-The High Frequency FIX Parser library is an open source implementation of
-<a href="https://www.fixtrading.org/standards/">tagvalue FIX (classic FIX)</a>
-intended for use by developers of high frequency, low latency financial software.  The purpose of the library is to do fast, efficient encoding and decoding of FIX in place, at the location of the I/O buffer. The library does not use intermediate message objects, and it does **no memory allocation** on the free store (the “heap”).
-
-*hffix* library is not certified by any industry-leading committees. It is not an “engine.” It is not an “adaptor.” It has no threading, no I/O, no object-oriented subtyping.  It is just a superfast parser and serializer in plain modern generic-iterator-style C++98.
-
-## Hello, FIX! Quick Start
-
-The main repository is at <https://github.com/jamesdbrock/hffix>
-
-### fixprint
-To see an example of the library in action, enter these four commands at your shell prompt. This example uses the `fixprint` utility which comes with the *hffix* library. The result will be a colorized and pretty-printed FIX 5.0 test data set.
-
-    git clone https://github.com/jamesdbrock/hffix.git
-    cd hffix
-    make fixprint
-    util/bin/fixprint --color < test/data/fix.5.0.set.2 | less -R
-
-
-### Usage
-
-The library is header-only, so there is nothing to link. To use the `hffix.hpp` library for C++ FIX development, place the two header files in your include path and `#include <hffix.hpp>`.
-
-* `hffix/include/hffix.hpp`
-* `hffix/include/hffix_fields.hpp`
-
-### Documentation
-
-Full Doxygen is on the internet at <https://jamesdbrock.github.io/hffix>
-
-To build the Doxygen html documentation in the `doc/html` directory and view it:
-
-    git clone https://github.com/jamesdbrock/hffix.git
-    cd hffix
-    make doc
-    xdg-open doc/html/index.html
-
-## Library Design
-
-High Frequency FIX Parser tries to follow the
-<a href="https://github.com/isocpp/CppCoreGuidelines/blob/master/CppCoreGuidelines.md">C++ Core Guidelines</a> and the
-<a href="http://www.boost.org/development/requirements.html">Boost Library Requirements and Guidelines</a>.  It is modern platform-independent header-only C++98 and depends only on the C++ Standard Library.  It is patterned after the C++ Standard Template Library, and it models each FIX message with Container and Iterator concepts. It employs compile-time generic templates but does not employ object-oriented inheritance.
-
-### Speed
-
-The design criteria for High Frequency FIX Parser are based on our experience passing messages to various FIX hosts for high frequency quantitative trading at <a href="http://www.t3live.com">T3 Trading Group, LLC</a>. These design criteria follow from the observation that the latency of a trading system depends on the following list of considerations, in descending order of importance.
-
-1. __Network architecture.__ Most of the latency will be in the network between us and our peer, outside of our control. We should do everything we can to exert some control over the network to shorten our path.
-2. __Operating System I/O syscall usage.__ We should be very careful about which syscalls we're using to do network I/O. Perhaps use an OS bypass NIC.
-3. __Operating System thread usage.__ We should be running a single pinned operating system thread per core with a multiplexed event loop like *Boost Asio* or *libuv* for waiting on I/O events.
-4. __Userspace runtime memory usage.__ Memory allocations can trigger a page fault and a syscall. Complicated object-oriented designs with lots of pointer indirections lead to cache misses and branch prediction failures.
-5. __Userspace algorithms.__ This is the easiest stuff to measure and the most fun to discuss, so a lot of attention is focused here, but it's only important if we get all the other considerations right first.
-
-The *hffix* library assumes that the library user will want to make their own choices about considerations __2__ and __3__, and the *hffix* library focuses on providing good answers for consideration __4__. It does this by using only stack memory and I/O buffer memory, and never allocating on the free store.
-
-In contrast, the popular alternative *QuickFix* library forces the user to use the *QuickFix* solution to considerations __2__ and __3__ for threads and sockets, and most of *QuickFix*'s choices about threads and sockets are not great. *QuickFix* also has an inefficient object-oriented design for consideration __4__.
-
-See also <a href="https://www.youtube.com/watch?v=NH1Tta7purM">CppCon 2017: Carl Cook “When a Microsecond Is an Eternity: High Performance Trading Systems in C++”</a>
-
-### Specs Included
-
-All of the Financial Information Exchange (FIX) protocol specification versions supported by the library are bundled into the the distribution, in the `fixspec` directory. As a convenience for the developer, the High Frequency FIX Parser library includes a program which parses the FIX protocol specification documents and generates the `include/hffix_fields.hpp` file. That file `hffix::tag` enums and an `hffix::dictionary_init_field` function which allows fields to be referred to by name instead of number during both compile-time and run-time.
-
-### Platforms
-
-The library is platform-independent C++98, and is tested on Linux
-with *gcc* and *clang* on
-[Github Actions](https://github.com/jamesdbrock/hffix/actions/workflows/ci.yml).
-
-
-### License
-
-The main High Frequency FIX Parser Library is distributed under the open source FreeBSD License, also known as the Simplified BSD License.
-
-Some extra components are under the Boost Software License.
-
-Included FIX specs are copyright FIX Protocol, Limited.
-
-## Features
-
-### Serial Message Field Access
-
-For reading FIX messages, High Frequency FIX Parser presents an STL-style
-<a href="https://en.cppreference.com/w/cpp/named_req/ForwardIterator">immutable Forward Iterator</a>
-interface. Writing fields is done serially with an interface similar to an STL-style
-<a href="https://en.cppreference.com/w/cpp/named_req/SequenceContainer">Back Insertion Sequence Container</a>.
-Reading and writing are done directly on the I/O buffer, without any intermediate objects.
-
-The disadvantage of this implementation is that the message API provides serial access to fields, not random access. Of course, when we're writing a message, random access isn't important, just write out the fields in order. When we're reading a message, it's easy enough to pretend that we have random access by using iterator algorithms like `std::find`. A convenience algorithm `hffix::message_reader::find_with_hint` is provided by this library for efficiently reading fields when you know approximately what field order to expect. See the examples below for how this works out in practice.
-
-The advantage is that this enables the High Frequency FIX Parser library to completely avoid free store memory allocation.
-The library performs all memory allocation on the stack, and the library never requires developers using the library to allocate anything on the free store with `new` or `malloc`.
-
-Field values in the FIX protocol are always encoded on the wire as ASCII, and High Frequency FIX Parser exposes field values to the developer as iterator range `char const* begin(), char const* end()`. High Frequency FIX Parser also provides a complete set of conversion functions to native C++ types for *ints*, *decimal floats*, *dates* and *times*, et cetera — see documentation for `hffix::message_writer` and `hffix::field_value`.
-
-### Exceptions
-
-Some functions in this library may throw `std::logic_error` if a precondition is not met by the programmer, so you can usually prevent the library from throwing exceptions by meeting the precondition. All methods, functions, constructors, and destructors provide the No-Throw exception guarantee unless they are documented to throw exceptions, in which case they provide the Basic exception guarantee. See documentation for details.
-
-### Thread Safety
-
-High Frequency FIX Parser is not thread-aware at all and has no threads, mutexes, locks, or atomic operations.
-
-All `const` methods of the `hffix::message_reader` are safe for concurrent calls.
-
-The `hffix::message_writer` is not safe for concurrent calls.
-
-`hffix::message_reader` and `hffix::message_writer` have no storage of their own, they read and write fields directly on an I/O buffer. The developer must guarantee that the buffer endures while fields are being read or written.
-
-### FIX Sessions
-
-Managing sessions requires making choices about sockets and threads.  High Frequency FIX Parser does not manage sessions.  It is intended for developers who want a FIX parser with which to build a session manager for a high-performance trading system that already has a socket and threading architecture.
-
-FIX has transport-layer features mixed in with the messages, and most FIX hosts have various quirks in the way they employ the administrative messages. To manage a FIX session your application will need to match the the transport-layer and administrative features of the other FIX host. High Frequency FIX Parser has the flexibility to express any subset or proprietary superset of FIX.
-
-See also [FIX Session-level Test Cases and Expected Behaviors](http://www.fixtradingcommunity.org/pg/file/fplpo/read/30489/fix-sessionlevel-test-cases-and-expected-behaviors)
-
-### Numerics
-
-No native floating-point numeric types (`double`, `float`) are employed by the library.
-ASCII-encoded decimal numbers are represented by integral mantissa and exponent.
-See `hffix::message_writer::push_back_decimal()` and `hffix::field_value::as_decimal()`.
-As with every FIX data type, the High Frequency FIX library user has the option to serialize
-and deserialize numeric fields themself rather than use these methods.
-
-### Encryption
-
-High Frequency FIX Parser supports the binary data field types such as *SecureData*, but it does not implement any of the *EncryptMethods* suggested by the FIX specifications. If you want to encrypt or decrypt some data you'll have to do the encryption or decryption yourself.
-
-### CheckSum
-
-High Frequency FIX Parser will calculate the *CheckSum* field for all messages that you encode.  It can validate the *CheckSum* of messages decoded, but does not do that calculation unless you explicitly ask for it.
-
-### Sequence Numbers
-
-The *MsgSeqNum* field in the FIX Standard Header is exposed for reading and writing.
-
-### Administrative Messages
-
-The administrative messages *Logon*, *Logout*, *ResendRequest*, *Heartbeat*, *TestRequest*, *SeqReset-Reset* and *SeqReset-GapFill* don't get special treatment in High Frequency FIX Parser. Any administrative message can be encoded or decoded like any other message.
-
-### User-Defined Fields and Custom Tags
-
-High Frequency FIX Parser does not enforce the data type of the Field Definitions for content fields in the FIX spec, so the developer is free to read or write any tag number with any field data type. See `hffix::message_writer` and `hffix::field_value` documentation under Extension for details.
-
-
-## Using High Frequency FIX Parser
-
-### Writing a Message Example
-
-This example program is in the *hffix* repository at `test/src/writer01.cpp`.
-
-It writes a _Logon_ message and a _New Order - Single_ message to `stdout`.
-
-~~~cpp
-// We want Boost Date_Time support, so include these before hffix.hpp.
-#include <boost/date_time/posix_time/posix_time_types.hpp>
-#include <boost/date_time/gregorian/gregorian_types.hpp>
-
-#include <hffix.hpp>
-#include <iostream>
-
-using namespace boost::posix_time;
-using namespace boost::gregorian;
-
-int main(int argc, char** argv)
-{
-    int seq_send(1); // Sending sequence number.
-
-    char buffer[1 << 13];
-
-    ptime tsend(date(2017,8,9), time_duration(12,34,56));
-
-    // We'll put a FIX Logon message in the buffer.
-    hffix::message_writer logon(buffer, buffer + sizeof(buffer));
-
-    logon.push_back_header("FIX.4.2"); // Write BeginString and BodyLength.
-
-    // Logon MsgType.
-    logon.push_back_string    (hffix::tag::MsgType, "A");
-    logon.push_back_string    (hffix::tag::SenderCompID, "AAAA");
-    logon.push_back_string    (hffix::tag::TargetCompID, "BBBB");
-    logon.push_back_int       (hffix::tag::MsgSeqNum, seq_send++);
-    logon.push_back_timestamp (hffix::tag::SendingTime, tsend);
-    // No encryption.
-    logon.push_back_int       (hffix::tag::EncryptMethod, 0);
-    // 10 second heartbeat interval.
-    logon.push_back_int       (hffix::tag::HeartBtInt, 10);
-
-    logon.push_back_trailer(); // write CheckSum.
-
-    // Now the Logon message is written to the buffer.
-
-    // Add a FIX New Order - Single message to the buffer, after the Logon
-    // message.
-    hffix::message_writer new_order(logon.message_end(), buffer + sizeof(buffer));
-
-    new_order.push_back_header("FIX.4.2");
-
-    // New Order - Single
-    new_order.push_back_string    (hffix::tag::MsgType, "D");
-    // Required Standard Header field.
-    new_order.push_back_string    (hffix::tag::SenderCompID, "AAAA");
-    new_order.push_back_string    (hffix::tag::TargetCompID, "BBBB");
-    new_order.push_back_int       (hffix::tag::MsgSeqNum, seq_send++);
-    new_order.push_back_timestamp (hffix::tag::SendingTime, tsend);
-    new_order.push_back_string    (hffix::tag::ClOrdID, "A1");
-    // Automated execution.
-    new_order.push_back_char      (hffix::tag::HandlInst, '1');
-    // Ticker symbol OIH.
-    new_order.push_back_string    (hffix::tag::Symbol, "OIH");
-    // Buy side.
-    new_order.push_back_char      (hffix::tag::Side, '1');
-    new_order.push_back_timestamp (hffix::tag::TransactTime, tsend);
-    // 100 shares.
-    new_order.push_back_int       (hffix::tag::OrderQty, 100);
-    // Limit order.
-    new_order.push_back_char      (hffix::tag::OrdType, '2');
-    // Limit price $500.01 = 50001*(10^-2). The push_back_decimal() method
-    // takes a decimal floating point number of the form mantissa*(10^exponent).
-    new_order.push_back_decimal   (hffix::tag::Price, 50001, -2);
-    // Good Till Cancel.
-    new_order.push_back_char      (hffix::tag::TimeInForce, '1');
-
-    new_order.push_back_trailer(); // write CheckSum.
-
-    //Now the New Order message is in the buffer after the Logon message.
-
-    // Write both messages to stdout.
-    std::cout.write(buffer, new_order.message_end() - buffer);
-
-    return 0;
+# nanofix
+
+A header-only C++20 FIX 4.x/5.0 parser built for low-latency systems, forked
+from [jamesdbrock/hffix](https://github.com/jamesdbrock/hffix). Every read and
+write path allocates nothing, throws nothing, copies nothing — you own the
+buffer, the reader views it, the writer fills it. SIMD (AVX2/NEON) drives the
+hot scan, checksum, and indexed tag lookup; the tail percentiles are in the
+[benchmark tables](#benchmarks) below.
+
+Tags carry their FIX type at compile time. `find(tag::Price)` returns a
+`typed_value` whose accessors are gated to the field's category, so reading a
+`String` field as an integer is a compile error, not a runtime surprise — full
+type safety at zero runtime cost.
+
+Wire format only: no session layer, no transport. On top of upstream it adds
+indexed and repeating-group reads, drops Boost (`chrono` + epoch ints), and
+ships a Google Benchmark suite. Porting guide: [API_CHANGES.md](API_CHANGES.md).
+
+## Quickstart
+
+```cpp
+#include <nanofix.hpp>
+
+// read — tag::Price is a typed handle; find() returns a typed_value whose
+// accessors are restricted to the field's FIX type (wrong one = compile error).
+nanofix::message_reader r(buf, buf + n);
+if (r.is_complete() && r.is_valid()) {
+    long mant, exp;
+    if (r.find(nanofix::tag::Price).try_as_decimal(mant, exp))  // mant * 10^exp
+        use(mant, exp);
+    // r.find(nanofix::tag::Symbol).try_as_int(x);   // would not compile (String)
+
+    for (auto it = r.begin(); it != r.end(); ++it)   // or stream every field
+        dispatch(it->tag(), it->value());            // raw field_value, any type
 }
-~~~
 
-
-### Reading a Message Example
-
-This example program is in the *hffix* repository at `test/src/reader01.cpp`.
-
-It reads messages from `stdin`. If it finds a _Logon_ message or a _New Order - Single_ message, then it prints out some information about their fields.
-
-~~~cpp
-#include <iostream>
-#include <cstdio>
-#include <map>
-
-// We want Boost Date_Time support, so include these before hffix.hpp.
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/date_time/gregorian/gregorian.hpp>
-
-#include <hffix.hpp>
-
-const size_t chunksize = 4096; // Choose a preferred I/O chunk size.
-
-char buffer[1 << 20]; // Must be larger than the largest FIX message size.
-
-int main(int argc, char** argv)
-{
-    int return_code = 0;
-
-    std::map<int, std::string> field_dictionary;
-    hffix::dictionary_init_field(field_dictionary);
-
-    size_t buffer_length(0); // The number of bytes read in buffer[].
-
-    size_t fred; // Number of bytes read from fread().
-
-    // Read chunks from stdin until 0 is read or the buffer fills up without
-    // finding a complete message.
-    while ((fred = std::fread(
-                    buffer + buffer_length,
-                    1,
-                    std::min(sizeof(buffer) - buffer_length, chunksize),
-                    stdin
-                    )
-          )) {
-
-        buffer_length += fred;
-        hffix::message_reader reader(buffer, buffer + buffer_length);
-
-        // Try to read as many complete messages as there are in the buffer.
-        for (; reader.is_complete(); reader = reader.next_message_reader()) {
-            if (reader.is_valid()) {
-
-                // Here is a complete message. Read fields out of the reader.
-                try {
-                    if (reader.message_type()->value() == "A") {
-                        std::cout << "Logon message\n";
-
-                        hffix::message_reader::const_iterator i = reader.begin();
-
-                        if (reader.find_with_hint(hffix::tag::SenderCompID, i))
-                            std::cout
-                                << "SenderCompID = "
-                                << i++->value() << '\n';
-
-                        if (reader.find_with_hint(hffix::tag::MsgSeqNum, i))
-                            std::cout
-                                << "MsgSeqNum    = "
-                                << i++->value().as_int<int>() << '\n';
-
-                        if (reader.find_with_hint(hffix::tag::SendingTime, i))
-                            std::cout
-                                << "SendingTime  = "
-                                << i++->value().as_timestamp() << '\n';
-
-                        std::cout
-                            << "The next field is "
-                            << hffix::field_name(i->tag(), field_dictionary)
-                            << " = " << i->value() << '\n';
-
-                        std::cout << '\n';
-                    }
-                    else if (reader.message_type()->value() == "D") {
-                        std::cout << "New Order Single message\n";
-
-                        hffix::message_reader::const_iterator i = reader.begin();
-
-                        if (reader.find_with_hint(hffix::tag::Side, i))
-                            std::cout <<
-                                (i++->value().as_char() == '1' ?"Buy ":"Sell ");
-
-                        if (reader.find_with_hint(hffix::tag::Symbol, i))
-                            std::cout << i++->value() << " ";
-
-                        if (reader.find_with_hint(hffix::tag::OrderQty, i))
-                            std::cout << i++->value().as_int<int>();
-
-                        if (reader.find_with_hint(hffix::tag::Price, i)) {
-                            int mantissa, exponent;
-                            i->value().as_decimal(mantissa, exponent);
-                            std::cout << " @ $" << mantissa << "E" << exponent;
-                            ++i;
-                        }
-
-                        std::cout << "\n\n";
-                    }
-
-                } catch(std::exception& ex) {
-                    std::cerr << "Error reading fields: " << ex.what() << '\n';
-                }
-
-            } else {
-                // An invalid, corrupted FIX message. Do not try to read fields
-                // out of this reader. The beginning of the invalid message is
-                // at location reader.message_begin() in the buffer, but the
-                // end of the invalid message is unknown (because it's invalid).
-                //
-                // Stay in this for loop, because the
-                // messager_reader::next_message_reader() function will see
-                // that this message is invalid and it will search the
-                // remainder of the buffer for the text "8=FIX", to see if
-                // there might be a complete or partial valid message anywhere
-                // else in the remainder of the buffer.
-                //
-                // Set the return code non-zero to indicate that there was
-                // an invalid message, and print the first 64 chars of the
-                // invalid message.
-                return_code = 1;
-                std::cerr << "Error Invalid FIX message: ";
-                std::cerr.write(
-                    reader.message_begin(),
-                    std::min(
-                        ssize_t(64),
-                        buffer + buffer_length - reader.message_begin()
-                        )
-                    );
-                std::cerr << "...\n";
-            }
-        }
-        buffer_length = reader.buffer_end() - reader.buffer_begin();
-
-        if (buffer_length > 0)
-            // Then there is an incomplete message at the end of the buffer.
-            // Move the partial portion of the incomplete message to buffer[0].
-            std::memmove(buffer, reader.buffer_begin(), buffer_length);
-    }
-
-    return return_code;
-}
-~~~
-
-### Running the Examples
-
-The writer example can be piped to the reader example. Running these commands:
-
-    make examples
-    test/bin/writer01 | test/bin/reader01
-
-Should produce output like this:
-
-<pre style="white-space:pre-wrap;background-color:#171717;padding:1em;">
-<span style="color: #F5F1DE">Logon message
-SenderCompID = AAAA
-MsgSeqNum =    1
-SendingTime =  2014-Sep-26 15:27:38.789000
-The next field is EncryptMethod = 0<br/>
-New Order Single message
-Buy OIH 100 @ $50001E-2
-</span>
-</pre>
-
-
-To examine the output from `test/bin/writer01` program, you can also use `util/bin/fixprint`, like this:
-
-    make examples
-    make fixprint
-    test/bin/writer01 | util/bin/fixprint --color
-
-Which will produce output like this:
-
-<pre style="white-space:pre-wrap;background-color:#171717;padding:1em;">
-<span style="color: #F5F1DE">FIX.4.2 </span><span style="color: #aa5500">MsgType_35=</span><span style="color: #aa0000">A_Logon </span><span style="color: #aa5500">SenderCompID_49=</span><span style="color: #F5F1DE">AAAA </span><span style="color: #aa5500">TargetCompID_56=</span><span style="color: #F5F1DE">BBBB </span><span style="color: #aa5500">MsgSeqNum_34=</span><span style="color: #F5F1DE">1 </span><span style="color: #aa5500">SendingTime_52=</span><span style="color: #F5F1DE">20140928-07:12:06.000 </span><span style="color: #aa5500">EncryptMethod_98=</span><span style="color: #F5F1DE">0 </span><span style="color: #aa5500">HeartBtInt_108=</span><span style="color: #F5F1DE">10</span>
-<span style="color: #F5F1DE">FIX.4.2 </span><span style="color: #aa5500">MsgType_35=</span><span style="color: #aa0000">D_NewOrderSingle </span><span style="color: #aa5500">SenderCompID_49=</span><span style="color: #F5F1DE">AAAA </span><span style="color: #aa5500">TargetCompID_56=</span><span style="color: #F5F1DE">BBBB </span><span style="color: #aa5500">MsgSeqNum_34=</span><span style="color: #F5F1DE">2 </span><span style="color: #aa5500">SendingTime_52=</span><span style="color: #F5F1DE">20140928-07:12:06.000 </span><span style="color: #aa5500">ClOrdID_11=</span><span style="color: #F5F1DE">A1 </span><span style="color: #aa5500">HandlInst_21=</span><span style="color: #F5F1DE">1 </span><span style="color: #aa5500">Symbol_55=</span><span style="color: #F5F1DE">OIH </span><span style="color: #aa5500">Side_54=</span><span style="color: #F5F1DE">1 </span><span style="color: #aa5500">TransactTime_60=</span><span style="color: #F5F1DE">20140928-07:12:06.000 </span><span style="color: #aa5500">OrderQty_38=</span><span style="color: #F5F1DE">100 </span><span style="color: #aa5500">OrdType_40=</span><span style="color: #F5F1DE">2 </span><span style="color: #aa5500">Price_44=</span><span style="color: #F5F1DE">500.01 </span><span style="color: #aa5500">TimeInForce_59=</span><span style="color: #F5F1DE">1</span>
-</pre>
-
-
-## Dates and Times Type Support
-
-### Boost Date_Time
-
-If the <a href="http://www.boost.org/doc/html/date_time.html">Boost Date_Time</a> library is available in your build environment, `boost::posix_time::ptime`, `boost::posix_time::time_duration`, and `boost::gregorian::date` will be automatically supported for the various FIX date and time field types.
-See `hffix::message_writer` and `hffix::field_value` documentation for details.
-
-To enable High Frequency FIX Parser support for the Boost Date_Time library types, include the Boost libraries before the hffix.hpp library, like this:
-
-~~~cpp
-#include <boost/date_time/posix_time/posix_time_types.hpp>
-#include <boost/date_time/gregorian/gregorian_types.hpp>
-#include <hffix.hpp>
-~~~
-
-To prevent High Frequency FIX Parser support for the Boost Date_Time library, `#define HFFIX_NO_BOOST_DATETIME` before including `hffix.hpp`:
-
-~~~cpp
-#define HFFIX_NO_BOOST_DATETIME
-#include <hffix.hpp>
-~~~
-
-### `std::chrono`
-
-If you are building under C++11 or higher then the `std::chrono::time_point` and
-`std::chrono::duration` types are supported for the various FIX date and time field types.
-See `hffix::message_writer` and `hffix::field_value` documentation for details.
-
-
-## Test
-
-Sample data sources, discovered by Googling.
-
-* `test/data/fix.4.1.set.1`    http://fixparser.targetcompid.com/
-* `test/data/fix.5.0.set.1`    https://www.jse.co.za/content/JSETechnologyDocumentItems/03.%20JSE%20Indices.recv.log.txt
-* `test/data/fix.5.0.set.2`    http://blablastreet.com/workshop/TestSocketServer/TestSocketServer/bin/Debug/store/FIXT.1.1-ATP1CMEMY-OMSCMEMY.body
-
-The Chicago Mercantile Exchange is also a good source of sample data files, but the files are too big to include in this repository. The script `test/curl.cme.data.sh` shows how to download them. Run `curl.cme.data.sh` in the `test/` directory.
-
-## Cookbook
-
-### Multi-threaded Sending
-
-Q: I have a bunch of different threads serializing and sending FIX messages out one socket. When each message is sent it needs a *MsgSeqNum*, but at serialization time I don't know what the *MsgSeqNum* will be, I only know that at sending time.
-
-A: That multi-threading model is not a good choice for your software. The performance penalty for that threading model is much greater than the performance advantage of this non-allocating parser library. You should consider redesigning to use a single-threaded simultaneous-wait event loop like *libev* or *Boost Asio*. If you insist on multi-threading, then you could do something like this code example.
-
-~~~cpp
-hffix::message_writer m;
-m.push_back_string(hffix::tag::MsgSeqNum, "00000000"); // Make a placeholder value over which you can later paste your sequence number.
-
-// This thread_safe_send() function will correctly sequence FIX messages if two threads are racing to call thread_safe_send().
-void thread_safe_send(hffix::message_writer const& w) {
-  lock l(send_mutex_); // Serialize access to this function.
-  hffix::message_reader r(w); // Construct a reader from the writer.
-  hffix::message_reader::const_iterator i = std::find_if(r.begin(), r.end(), hffix::tag_equal(hffix::tag::MsgSeqNum)); // Find the MsgSeqNum field.
-  if (i != r.end()) {
-    std::snprintf(const_cast<char*>(i->value().begin()), i->value().size(), "%.8i", next_sequence_number++); // Overwrite the "00000000" string with the next_sequence_number.
-    write(fd, w.message_begin(), w.message_size()); // Send the message to the socket.
-  }
-}
-~~~
-
-### FIX Repeating Groups
-
-From *FIX-50_SP2_VOL-1_w_Errata_20110818.pdf* page 21:
-
-<blockquote>If the repeating group is used, the first field of the repeating group is required. This allows
-implementations of the protocol to use the first field as a "delimiter" indicating a new repeating group
-entry. The first field listed after the NoXXX, then becomes conditionally required if the NoXXX field
-is greater than zero.</blockquote>
-
-The beginning of each Repeating Group is marked by a field with a “NoXXX” field. By convention, Repeating Groups are usually located at the end of the message, so the end of the message marks the end of the Repeating Group. In this example we assume that the convention holds, and the repeating group is at the end of the message. If the repeating group were not at the end of the message then we'd have to pay attention to the value of the “NoXXX” fields, which is left as an exercise for the reader.
-
-This is an example of iterating over the nested Repeating Groups when reading a *Mass Quote* message.
-The *Mass Quote* message has *QuoteSet* Repeating Groups, and nested inside those groups are *QuoteEntry* Repeating Groups, see *fix-42-with_errata_20010501.pdf* page 52.
-In each repeated *QuoteSet* Group, `hffix::tag::QuoteSetID` is always the first field. In each repeated *QuoteEntry* Group, `hffix::tag::QuoteEntryID` is always the first field.
-
-~~~cpp
-hffix::message_reader r;
-
-hffix::message_reader::const_iterator group1_begin = std::find_if(r.begin(), r.end(), hffix::tag_equal(hffix::tag::QuoteSetID));
-hffix::message_reader::const_iterator group1_end;
-
-for (; group1_begin != r.end(); group1_begin = group1_end) {
-    group1_end = std::find_if(group1_begin + 1, r.end(), hffix::tag_equal(hffix::tag::QuoteSetID));
-
-    // This loop body will be entered once for each QuoteSet Repeating Group.
-    //
-    // group1_begin will point to the first field in the QuoteSet group, which is always hffix::tag::QuoteSetID.
-    // group1_end   will point past-the-end of the QuoteSet group.
-
-    hffix::message_reader::const_iterator group2_begin = std::find_if(group1_begin, group1_end, hffix::tag_equal(hffix::tag::QuoteEntryID));
-    hffix::message_reader::const_iterator group2_end;
-
-    for (; group2_begin != group1_end; group2_begin = group2_end) {
-        group2_end = std::find_if(group2_begin + 1, group1_end, hffix::tag_equal(hffix::tag::QuoteEntryID));
-
-        // This loop body will be entered once for each QuoteEntry Repeating Group.
-        //
-        // group2_begin will point to the first field of the QuoteEntry group, which is always QuoteEntryID.
-        // group2_end   will point past-the-end of the QuoteEntry group.
-    }
-}
-~~~
-
-
-
-## Support
-
-Please make an issue on this repository if you have any questions about how the
-library works or suggestions about how to improve it.
-If you want to talk privately then email me at <jamesbrock@gmail.com>.
-
-
-## Contributing
-
-### Makefile
-
-Our build system is `make`. The `Makefile` provides targets and pseudo-targets
-for various parts of the library.
-
-`make test` to run the test suite.
-
-`make doc` to build the documentation.
-
-### Nix
-
-We have a `flake.nix`.
-
-```
-nix flake show github:jamesdbrock/hffix
+// write
+char out[256];
+nanofix::message_writer w(out);
+w.push_back_header("FIXT.1.1");
+w.push_back_string(nanofix::tag::MsgType, "D");
+w.push_back_int(nanofix::tag::OrderQty, 100);
+w.push_back_decimal(nanofix::tag::Price, 50001, -2);
+if (!w.push_back_trailer()) return too_small();          // false == didn't fit
+char* end = w.message_end();
 ```
 
-#### Development
+Many messages in one buffer: `nanofix::for_each_message(begin, end, fn)` hands
+back each complete, valid reader and resyncs past garbage.
 
-The `flake.nix` declares a *Nix* shell development environment which provides all
-dependencies for every target in the `Makefile`, including *Doxygen*.
-Enter the *Nix* shell by
-[installing *Nix*](https://nixos.org/download.html)
-and then running `nix develop` in this directory. From the `nix develop` prompt,
-you will be able to build all `Makefile` targets.
+## Choosing an access path
 
-#### Package
+Same wire, same reader; these differ only in how you locate a tag, and you can
+mix them. Default to the iterator; reach for the rest when the lookup count or a
+stable venue justifies it. Each also works on one repeating-group entry.
 
-The *Nix* `hffix` package will provide the `hffix` C++ library.
+| Path | Use when | How |
+| --- | --- | --- |
+| **Iterator** | the default — a few lookups, or fields read once in wire order | `r.find(tag::X)`, `r.find_with_hint(tag::X, it)`, or `for (it = r.begin(); ...)` |
+| **`nanofix::with_fields(r, buf, fn)`** | many lookups, want an index with automatic iterator fallback | `with_fields(r, buf, [&](auto& f){ f.find(tag::X); })` |
+| **Indexed** (`build_field_index`) | many lookups (~6–8+) into one message | `build_field_index(r, buf)` once, then `find(tag::X)` |
 
-#### Apps
+Every `tag::X` is a **typed handle**. `find(tag::X)` / `find_with_hint(tag::X,
+it)` return a `typed_value` exposing only the accessors valid for that field's
+FIX type — `try_as_decimal` for `Price`, `as_string_view` for `Symbol`; the
+wrong one is a compile error. `bytes()` / `as_string_view()` /
+`as_char_unchecked()` stay available on any typed value, and `.value()` drops to
+the raw `field_value` (ungated `try_*` / `as_*_unchecked`, the escape hatch for
+off-spec data). The `tag::` namespace needs no extra header and costs nothing at
+runtime when the tag is known at compile time. `tag::X` also converts to its
+`int` number, so writer / comparison / `group()` call sites take it unchanged.
 
-Run the `fixprint` utility:
+`find(tag::X)` scans from the start; `find_with_hint(tag::X, it)` carries a
+cursor, so reading tags in wire order stays cheap. An absent tag scans to
+end-of-message — don't loop `find` over many optional tags (O(N × length));
+index instead.
 
+### Tiered `with_fields(r, buf, fn)` — index with iterator fallback
+
+`with_fields` builds the index, checks `truncated()` **once**, then calls your
+callback with a concrete accessor: `indexed_fields<N>` when the message fit the
+buffer, `iter_fields` when it exceeded `N` fields. Each accessor's `find(tag)`
+is branch-free — the index↔iterator decision lives in the dispatch, not the
+per-lookup hot path. Write the callback as a generic lambda; it is instantiated
+for both accessor types. The buffer is yours, reused per message:
+
+```cpp
+nanofix::field_index_buffer<64> buf;
+for (auto const& m : nanofix::messages(wire)) {
+    nanofix::with_fields(m, buf, [&](auto& f) {
+        long qty_m = 0, qty_e = 0;
+        f.find(tag::OrderQty).try_as_decimal(qty_m, qty_e);  // OrderQty is a Qty
+        auto px = f.find(tag::Price);          // empty() if absent
+    });
+}
 ```
-nix run github:jamesdbrock/hffix#fixprint
+
+`build_field_index(r, buf)` is the same index without the dispatch wrapper; on
+`truncated()` (message exceeded `N` fields) it returns an empty index, so
+branch back to the iterator yourself. When you know a message fits, wrap that
+index directly: `nanofix::indexed_fields<N> f(build_field_index(r, buf));`.
+
+### Repeating groups
+
+A whole-message index can't address group fields (repeating tags collide — a
+`find` returns only the first entry's), so a group is read per entry. Feed the
+group's count tag and its delimiter to the runtime `group(count, delim)`
+overload, then read each entry with the per-entry iterator. The delimiter is
+per-MsgType: a `NoMDEntries` in a snapshot starts at `MDEntryType`, in an
+incremental at `MDUpdateAction`.
+
+```cpp
+m.group(tag::NoMDEntries, tag::MDUpdateAction)  // incremental delimiter
+ .for_each([&](nanofix::group_entry const& e) {
+     auto it = e.begin();
+     long mant, exp;
+     if (e.find_with_hint(tag::MDEntryPx, it).try_as_decimal(mant, exp)) {  // typed
+         use(mant, exp);
+     }
+ });
 ```
 
-### Pull Requests
+`build_field_index(entry, buf)` also works on a single entry when an entry
+carries enough fields to amortize the index. See
+[examples/fix50_mdmonitor](examples/fix50_mdmonitor/) for a worked group reader.
 
-Pull requests welcome!
+## Build
 
-If you want to submit a bugfix pull request, then I would be grateful if you would
-break the pull request up into two commits:
+CMake 3.20+, Conan 2.x, C++20 toolchain.
 
-1. A commit that adds a test which fails because of the bug.
-2. A commit that fixes the bug and causes the new test to pass.
+```sh
+pip install 'conan>=2.0,<3.0'
+conan profile detect --force
 
-## Notes on the Design of FIX Protocol
+conan install . --output-folder=build --build=missing \
+    -s build_type=Release \
+    -s compiler.cppstd=gnu20 -s:b compiler.cppstd=gnu20
+cmake --preset conan-release
+cmake --build build/build/Release -j
+ctest --test-dir build/build/Release
+```
 
-### The *Logon* - *Resend Request* Race Condition
+`conan install` lays the build tree out under `build/build/Release` (the
+`conan-release` preset points there). A local checkout is the top-level CMake
+project, so `NANOFIX_BUILD` defaults ON and the tests, benchmarks, and CLI
+build without any extra flag — the `conanfile` forces them off only when
+nanofix is packaged as a dependency (`conan create`). The CLI binaries land in
+`build/build/Release/utils/` (`fixgen`, `fixprint`, `fixspec-gen`).
 
-When a FIX client connects to a FIX server, the client doesn't know what sequence number to use for the *Logon* message.
+### As a Conan 2 package
 
-Either the client can choose to reset both sequence numbers, in which case the client may miss messages, or not, in which case the client is subject to the *Resend Request* race condition.
+`conanfile.py` declares `nanofix/1.0.0`, header-only, CMake target
+`nanofix::nanofix`:
 
-After *Logon* response from the server, the client may begin sending messages, but the client has to wait some amount of time because the server may send *Resend Request*. If the client sends any message to the server while the server is preparing to send *Resend Request*, then the server's response is not defined by the *FIX* specification, and some servers implementations may seize up in confusion at that point.
+```sh
+conan create . --build=missing \
+    -s compiler.cppstd=gnu20 -s:b compiler.cppstd=gnu20 \
+    -c tools.build:skip_test=True
+```
 
+```cmake
+find_package(nanofix REQUIRED)
+target_link_libraries(my_app PRIVATE nanofix::nanofix)
+```
 
-## C++03|11|14|17|20
+### Example projects
 
-This library only depends on C++98.
+[`examples/`](examples/) holds standalone Conan 2 projects that consume
+`nanofix` as a downstream user would (publish to the local cache first, then
+build each on its own; exercised in CI):
 
-The library was designed with the intention of interacting well with C++11 features such as, for example, `auto`, or anonymous inline functions passed as the `UnaryPredicate` to `hffix::find_with_hint`. All the classes own no resources and are optimized for pass-by-value so move semantics are
-mostly irrelevent.
+| App | Spec | Shows |
+| --- | --- | --- |
+| [fix44_gateway](examples/fix44_gateway/) | QuickFIX `FIX44.xml` | `message_writer`, `for_each_message`, `with_fields` (index↔iterator), custom-spec codegen via `nanofix_generate()` |
+| [fix50_mdmonitor](examples/fix50_mdmonitor/) | bundled FIX 5.0 SP2 + FIXT 1.1 | per-MsgType `NoMDEntries` repeating-group read on market-data snapshot/incremental (delimiter differs per MsgType), per-entry typed `find(tag::X)`, enum decode via `nanofix/names.hpp` |
 
-`std::chrono` is supported in a `-std=c++11` build environment.
+## Benchmarks
 
-`std::string_view` is supported in a `-std=c++17` build environment.
+`benchmarks/` is a deep Google Benchmark suite (upstream ships none): every
+access path, warm and cold, sequential and random, plus write/read tail
+latency, SIMD primitives, and index amortization curves.
 
-## Change Log
+`compare2upstream/run.sh` is the differential harness. It builds upstream, this
+fork, and a scalar (`NANOFIX_DISABLE_SIMD`) config, runs **only the benches the
+overview table needs** (`--benchmark_filter`), and `render.py` prints a small
+README-shaped overview — four compact tables, not the full suite:
 
-<table>
-<caption>Change Log</caption>
+- **Write/read latency** (iterator path): write p99/p999, read p99/p999
+  (sequential and random).
+- **Write/read throughput** (iterator path): write,
+  read sequential, read random.
+- **New access path vs the upstream iterator — latency**: `build_field_index`,
+  p99/p999 vs upstream's only read path, shown SIMD-on and SIMD-off.
+- **New access path vs the upstream iterator — throughput**: the same path and
+  workload (SIMD-on and SIMD-off), message rate.
 
-<tr>
-<th>2024-04-18</th>
-<th>v1.4.1</th>
-<td>
-Fix for `std::basic_string_view<char>::const_iterator` not being convertible
-to `const char *` in Windows (#56)
-</td>
-</tr>
+### Indicative numbers
 
-<tr>
-<th>2024-02-19</th>
-<th>v1.4.0</th>
-<td>
+> **macOS, Apple M4, unpinned — indicative only.** macOS has no hard core
+> pinning and Apple Silicon migrates work across P/E cores mid-run, so these
+> drift run-to-run. Read them as rough shape, not measurements. `nanofix` is
+> `fork`; `fork-no-simd` is the same code with `NANOFIX_DISABLE_SIMD`; upstream
+> is `jamesdbrock/hffix`. Generated by `compare2upstream/run.sh`
+> (`min_time=0.3s`, `repetitions=5`).
 
-Add `hffix::message_writer::push_back_header()` for `string_view`,
-and `hffix::field_value::as_string_view()`
-by [Slawomir Kuzniar @skuzniar](https://github.com/skuzniar)
-(#51)
+Write/read latency — lower is better; upstream is the baseline. Iterator path
+(`find_with_hint` over a fixed **20-tag** set per message); tail percentiles
+include the ~20-30 ns `clock::now()` probe. The indexed path cuts the read tail
+by an order of magnitude — see the new-access-path latency table below:
 
-</td>
-</tr>
+| Benchmark | upstream | fork | fork-no-simd |
+| --- | --- | --- | --- |
+| `Write p99` | 116.8 ns | **84 ns (-28 %)** | 84 ns (-28 %) |
+| `Write p999` | 125 ns | **84 ns (-33 %)** | 84 ns (-33 %) |
+| `Read seq p99` | 82317 ns | 59641 ns (-28 %) | **58917 ns (-28 %)** |
+| `Read seq p999` | 92333 ns | 62817 ns (-32 %) | **61942 ns (-33 %)** |
+| `Read rand p99` | 128300 ns | 87575 ns (-32 %) | **87367 ns (-32 %)** |
+| `Read rand p999` | 154450 ns | 93359 ns (-40 %) | **91858 ns (-41 %)** |
 
-<tr>
-<th>2023-04-28</th>
-<th>v1.3.0</th>
-<td>
+Write/read throughput — higher is better; iterator path, upstream
+is the baseline:
 
-Add `hffix::msg_type` to `hffix_fields.hpp` (#47)
+| Benchmark | upstream | fork | fork-no-simd |
+| --- | --- | --- | --- |
+| `Write (NewOrder)` | 13.2 M msgs/s | **19.8 M msgs/s (+51 %)** | 19.8 M msgs/s (+50 %) |
+| `Read seq` | 31.7 k msgs/s | **44.5 k msgs/s (+40 %)** | 44.3 k msgs/s (+40 %) |
+| `Read random` | 21.7 k msgs/s | 27.9 k msgs/s (+29 %) | **30 k msgs/s (+38 %)** |
 
-</td>
-</tr>
+New access path vs the upstream iterator — latency (ns), lower is better. Same
+20-tag workload as the throughput table below; reading many tags makes the
+iterator rescan per lookup, while `build_field_index` is O(length) regardless
+of lookup count. Shown SIMD-on (`fork`) and SIMD-off (`fork-no-simd`) — SIMD
+`find_all_soh` drives the indexed path's bulk framing, so turning it off roughly
+triples its tail.
 
-<tr>
-<th>2022-05-22</th>
-<th>v1.2.1</th>
-<td>
+| Benchmark | upstream iterator | fork indexed | fork-no-simd indexed |
+| --- | --- | --- | --- |
+| `Read seq p99` | 82317 ns | **4741 ns (-94 %)** | 13434 ns (-84 %) |
+| `Read seq p999` | 92333 ns | **6475 ns (-93 %)** | 23408 ns (-75 %) |
+| `Read rand p99` | 128300 ns | **4975 ns (-96 %)** | 13392 ns (-90 %) |
+| `Read rand p999` | 154450 ns | **5350 ns (-97 %)** | 14242 ns (-91 %) |
 
-Bugfix: `MaxMessageSize` is not a data length field (#45)
+New access path vs the upstream iterator — message throughput, higher is
+better, delta vs upstream's iterator on the same workload. Shown SIMD-on
+(`fork`) and SIMD-off (`fork-no-simd`):
 
-</td>
-</tr>
+| Benchmark | upstream iterator | fork indexed | fork-no-simd indexed |
+| --- | --- | --- | --- |
+| `Read seq` | 31.7 k msgs/s | **535 k msgs/s (+1586 %)** | 216 k msgs/s (+582 %) |
+| `Read random` | 21.7 k msgs/s | **502 k msgs/s (+2214 %)** | 193 k msgs/s (+787 %) |
 
-<tr>
-<th>2021-10-11</th>
-<th>v1.1.1</th>
-<td>
+## Generated spec headers
 
-Bugfix: `message_reader::prefix_size()` return `size_t` instead of `ssize_t`.</td>
+`include/nanofix/detail/fields.hpp` (typed `tag::` handles) and `names.hpp` (opt-in
+human-readable names) carry the spec data. They are committed; regenerate from
+QuickFIX-format XML after a spec change — one invocation emits both into the
+output dir under fixed names:
 
-</td>
-</tr>
+```sh
+build/build/Release/utils/fixspec-gen fixspec/FIX50SP2.xml fixspec/FIXT11.xml \
+    -d include/nanofix
+```
 
-<tr>
-<th>2021-05-17</th>
-<th>v1.1.0</th>
-<td>
+FIX 5.0 needs both files (session FIXT.1.1 + application FIX.5.0 SP2); append
+venue XMLs as further positional args. Downstream targets can regenerate at
+build time:
 
-Added support for nanosecond-precision timestamps, by [Evan Wies @neomantra](https://github.com/neomantra)
+```cmake
+nanofix_generate(TARGET my_app
+    SPEC_XML my_spec/FIX50SP2.xml my_spec/FIXT11.xml)
+```
 
-</td>
-</tr>
+## Build options
 
-<tr>
-<th>2020-10-11</th>
-<th>v1.0.1</th>
-<td>
+| Option | Default | Effect |
+| --- | --- | --- |
+| `NANOFIX_BUILD` | ON top-level / OFF as subdir | Tests, benchmarks, CLI. |
+| `NANOFIX_NATIVE_ARCH` | ON | `-mcpu=native` / `-march=native`. |
+| `NANOFIX_LTO` | ON | IPO (Clang/AppleClang forced to `-flto=full`). |
+| `NANOFIX_DISABLE_SIMD` | OFF | Force scalar `find_all_soh` / `find_tag_in_index` / `checksum_bytes`. Required for pre-Haswell x86 (the SIMD build uses AVX2 unconditionally). |
+| `NANOFIX_SANITIZE` | OFF | ASan + UBSan (use with Debug, `NANOFIX_LTO=OFF`). |
+| `NANOFIX_SANITIZE_THREAD` | OFF | TSan. Mutually exclusive with `NANOFIX_SANITIZE`. |
+| `NANOFIX_BENCH_MESSAGES` | 500000 | Synthetic dataset size for `bench_data`. |
 
-Changed the `message_reader` copy-assignment operator so that Address Sanitizer doesn't complain that `ERROR: AddressSanitizer: stack-use-after-scope`.
-By [Michiel van Slobbe @mvanslobbe](https://github.com/mvanslobbe)
+```sh
+# debug + sanitizers
+conan install . --output-folder=build-asan --build=missing \
+    -s build_type=Debug -s compiler.cppstd=gnu20 -s:b compiler.cppstd=gnu20
+cmake --preset conan-debug -DNANOFIX_SANITIZE=ON -DNANOFIX_LTO=OFF -DNANOFIX_NATIVE_ARCH=OFF
+cmake --build build-asan/build/Debug -j && ctest --test-dir build-asan/build/Debug
+```
 
-</td>
-</tr>
-<tr>
+## SIMD dispatch
 
-<th>2020-08-15</th>
-<th>v1.0.0</th>
-<td>
+`find_all_soh`, `find_tag_in_index`, `checksum_bytes` ship scalar / NEON / AVX2
+impls, selected at compile time by `#if/#elif/#else` on `NANOFIX_HAS_NEON` /
+`NANOFIX_HAS_AVX2` — no runtime CPUID, no per-call overhead. NEON is the aarch64
+baseline (mandatory since ARMv8); AVX2 is the x86-64 baseline (Haswell, 2013),
+so **an x86-64 binary will not run on pre-Haswell CPUs** unless built with
+`NANOFIX_DISABLE_SIMD=ON`. SIMD wins on bulk, whole-message work: the framing
+sweep (`find_all_soh`) behind `build_field_index`, indexed tag lookup
+(`find_tag_in_index`), and the checksum of large messages. The plain
+**iterator path uses no SIMD** — per-field SOH search is `find_soh` (a
+short serial scan loses to branch-predicted byte compares) and the checksum is
+computed only on demand. So `NANOFIX_DISABLE_SIMD` changes the indexed path,
+not the iterator; on the iterator path SIMD-on vs SIMD-off differ only by binary
+layout, which on a cache-miss-bound random read is run-to-run noise (the
+macOS-unpinned caveat above the benchmark tables applies — the sign of that
+delta flips between runs). Supported: GCC, Clang, AppleClang, MSVC (x86-64 and
+ARM64).
 
-Version 1.
+## Fuzzing
 
-</td>
-</tr>
+A standalone CMake project under [fuzz/](fuzz/) builds a libFuzzer + ASan +
+UBSan binary over `message_reader`, `for_each_message`, repeating groups,
+`build_field_index`, and the `try_as_*` family, seeded from
+[tests/data/](tests/data/) and a FIX-token dictionary
+([fuzz/fix.dict](fuzz/fix.dict)). Replay a crash with
+`build/fuzz/fuzz_reader ./crash-<hash>`.
 
-<tr>
-<th> 2018-12-09</th>
-<th></th>
-<td>
+## Thread safety and errors
 
-Added support for `std::chrono`, by [@msherman13](https://github.com/msherman13)
-
-</td>
-</tr>
-<tr>
-<th>2018-12-09</th>
-<th></th>
-<td>
-
-Replace parsing of all the old FIX specs with parsing of
-the FIX Repository https://www.fixtrading.org/standards/fix-repository/
-to generate `hffix_fields.hpp`.
-
-This results in a lot more `length_fields` in `hffix_fields.hpp`, so change
-the algorithm for `is_tag_a_data_length()`.
-
-Keep all the old FIX spec documents in the repo for reference.
-
-#### Breaking Changes
-
-Some field names in `hffix::tag` were from the abbreviated
-FIX field name because the old specs were weird and difficult to parse.
-Field names now come from the FIX Repository and so all of the
-`hffix::tag` field names have become full field names. If your code fails
-to compile because it can't find, for example, `hffix::tag::NoReltdSym`,
-then change the symbol to `hffix::tag::NoRelatedSym`.
-
-</td>
-</tr>
-<tr>
-<th>2018-10-24</th>
-<th></th>
-<td>
-
-Replace the Python `codegen` spec parser with a Haskell
-`spec-parse-fields` spec parser.
-
-</td>
-</tr>
-<tr>
-<th>2017-09-12</th>
-<th></th>
-<td>
-
-Added support for `std::string_view`, by [Arvid Norberg @arvidn](https://github.com/arvidn)
-
-</td>
-</tr>
-</table>
-
-## Contributors
-
-Thank you to the following contributors, who mostly don't show up in the Github
-*Contributors* list because of my habit of adding “cleanup” commits to other
-people's pull requests.
-
-- [Arvid Norberg @arvidn](https://github.com/arvidn)
-- [@msherman13](https://github.com/msherman13)
-- [@j0nnyw](https://github.com/j0nnyw)
-- [Kyle Roth @kylrth](https://github.com/kylrth)
-- [Adam Kelly @aqk](https://github.com/aqk)
-- [Michiel van Slobbe @mvanslobbe](https://github.com/mvanslobbe)
-- [Evan Wies @neomantra](https://github.com/neomantra)
-
+Reader and writer methods are `noexcept`; errors surface via return code or a
+sticky flag (`is_valid()` / `ok()`), never an exception. Programmer-error
+invariants use `NANOFIX_ASSERT` (an atomic counter + optional handler, no
+`abort` unless built with `-DNANOFIX_ASSERT_FAILFAST`). The buffer is
+caller-owned and never mutated by a reader, so any number of `message_reader`s
+over the same `const` buffer are safe to use concurrently across threads
+(TSan-validated; see `tests/threading_tests.cpp`).

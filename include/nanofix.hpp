@@ -1,3 +1,4 @@
+/*******************************************************************************************
 Copyright 2011, T3 IP, LLC. All rights reserved.
 Copyright 2026, Łukasz Derlatka (modifications). All rights reserved.
 
@@ -11,10 +12,10 @@ permitted provided that the following conditions are met:
       of conditions and the following disclaimer in the documentation and/or other materials
       provided with the distribution.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY EXPRESS OR IMPLIED
+THIS SOFTWARE IS PROVIDED BY T3 IP, LLC "AS IS" AND ANY EXPRESS OR IMPLIED
 WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
-FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS
-OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL T3 IP, LLC OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
 CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
 SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
 ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
@@ -24,3 +25,20 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 The views and conclusions contained in the software and documentation are those of the
 authors and should not be interpreted as representing official policies, either expressed
 or implied, of T3 IP, LLC.
+*******************************************************************************************/
+
+/**
+ * \file
+ * \brief The nanofix FIX parser library.
+ */
+
+#pragma once
+
+#include <nanofix/detail/config.hpp>
+#include <nanofix/detail/diagnostics.hpp>
+#include <nanofix/detail/index.hpp>
+#include <nanofix/detail/numeric.hpp>
+#include <nanofix/detail/reader.hpp>
+#include <nanofix/detail/simd.hpp>
+#include <nanofix/detail/value_iter.hpp>
+#include <nanofix/detail/writer.hpp>

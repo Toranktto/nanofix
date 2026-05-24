@@ -1,0 +1,17 @@
+# Benchmark harness: inherit the root checks, but relax the ones that only
+# fire on Google Benchmark idioms and one-time registration code, not on
+# anything that ships:
+#   * clang-analyzer-deadcode.DeadStores — the `for (auto _ : state)` loop
+#     variable is the benchmark API; the "never read" store is the idiom.
+#   * bugprone-random-generator-seed — datasets are seeded with a fixed
+#     value on purpose, so runs are reproducible.
+#   * performance-inefficient-string-concatenation — benchmark names are
+#     built once at registration; not a hot path.
+#   * clang-analyzer-core.NullPointerArithm — a write-bench setup path the
+#     analyzer can't prove non-null; not reachable with a valid buffer.
+InheritParentConfig: true
+Checks: >
+  -clang-analyzer-deadcode.DeadStores,
+  -bugprone-random-generator-seed,
+  -performance-inefficient-string-concatenation,
+  -clang-analyzer-core.NullPointerArithm
