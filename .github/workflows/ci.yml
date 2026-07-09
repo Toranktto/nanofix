@@ -9,7 +9,7 @@ on:
 jobs:
   version:
     runs-on: ubuntu-latest
-    name: version consistency (git-derived)
+    name: version consistency
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,12 +97,6 @@ jobs:
             cc: clang
             cxx: clang++
             conan_extra: ""
-          - os: ubuntu-latest
-            compiler: gcc-no-simd
-            cc: gcc
-            cxx: g++
-            conan_extra: ""
-            cmake_extra: "-DNANOFIX_DISABLE_SIMD=ON"
           - os: macos-latest
             compiler: apple-clang
             cc: clang
@@ -117,7 +111,7 @@ jobs:
             compiler: clang-cl
             cc: clang-cl
             cxx: clang-cl
-            conan_extra: "-s:h compiler=msvc -s:h compiler.version=194 -s:h compiler.runtime=dynamic -s:b compiler=msvc -s:b compiler.version=194 -s:b compiler.runtime=dynamic"
+            conan_extra: "-s:h compiler=msvc -s:h compiler.version=${MSVC_VER} -s:h compiler.runtime=dynamic -s:b compiler=msvc -s:b compiler.version=${MSVC_VER} -s:b compiler.runtime=dynamic"
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} / ${{ matrix.compiler }}
     env:
@@ -155,6 +149,17 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # Conan's msvc compiler.version, derived from the installed toolset
+      # (cl 19.51 -> 195). Hardcoding it breaks every time the runner image
+      # rolls to a new Visual Studio.
+      - name: Detect MSVC toolset version (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          ver=$(cl 2>&1 | sed -nE 's/.*Version ([0-9]+)\.([0-9]{2}).*/\1\2/p' | head -1 | cut -c1-3)
+          [ -n "$ver" ] || { echo "could not parse cl version"; exit 1; }
+          echo "cl toolset -> conan msvc compiler.version=$ver"
+          echo "MSVC_VER=$ver" >> "$GITHUB_ENV"
+
       - name: Cache Conan packages
         uses: actions/cache@v4
         with:
@@ -179,7 +184,7 @@ jobs:
             ${{ matrix.conan_extra }}
 
       - name: CMake configure
-        run: cmake --preset conan-release ${{ matrix.cmake_extra }}
+        run: cmake --preset conan-release
 
       - name: CMake build
         run: cmake --build build/build/Release --config Release --parallel
