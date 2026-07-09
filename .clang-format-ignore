@@ -1,2 +1,3 @@
 include/nanofix/detail/fields.hpp
+include/nanofix/detail/version.hpp
 include/nanofix/names.hpp

@@ -1,5 +1,7 @@
+.DS_Store
 docs/html/
 build*/
+include/nanofix/detail/version.hpp
 benchmarks/data/
 compare2upstream/build/
 compare2upstream/results/

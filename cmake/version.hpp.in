@@ -1,0 +1,7 @@
+// Generated from git describe (v* tags) — do not edit; see scripts/gen-version.sh.
+#pragma once
+
+#define NANOFIX_VERSION_MAJOR @NANOFIX_VERSION_MAJOR@
+#define NANOFIX_VERSION_MINOR @NANOFIX_VERSION_MINOR@
+#define NANOFIX_VERSION_PATCH @NANOFIX_VERSION_PATCH@
+#define NANOFIX_VERSION "@NANOFIX_VERSION_FULL@"

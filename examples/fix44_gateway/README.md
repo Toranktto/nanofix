@@ -42,5 +42,5 @@ cmake --build build/build/Release -j
 ```
 
 The `nanofix` Conan package ships `fixspec-gen` and
-`nanofix_generate.cmake`, so the codegen step finds the binary
+`nanofix-generate.cmake`, so the codegen step finds the binary
 automatically.

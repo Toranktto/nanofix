@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(nanofix VERSION 1.0.0 LANGUAGES CXX)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/nanofix-version.cmake)
+
+project(nanofix VERSION ${NANOFIX_VERSION_BASE} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -113,9 +115,30 @@ endif()
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/nanofix_generate.cmake)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/nanofix_generate.cmake
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/nanofix-generate.cmake)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/nanofix-generate.cmake
         DESTINATION ${CMAKE_INSTALL_DATADIR}/nanofix/cmake)
+
+install(TARGETS nanofix EXPORT nanofix-targets)
+install(EXPORT nanofix-targets
+        FILE nanofix-targets.cmake
+        NAMESPACE nanofix::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/nanofix)
+
+include(CMakePackageConfigHelpers)
+set(NANOFIX_GENERATE_MODULE ${CMAKE_INSTALL_DATADIR}/nanofix/cmake/nanofix-generate.cmake)
+configure_package_config_file(cmake/nanofix-config.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/nanofix-config.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/nanofix
+    PATH_VARS NANOFIX_GENERATE_MODULE)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/nanofix-config-version.cmake
+    COMPATIBILITY SameMajorVersion
+    ARCH_INDEPENDENT)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/nanofix-config.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/nanofix-config-version.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/nanofix)
 
 add_subdirectory(utils)
 

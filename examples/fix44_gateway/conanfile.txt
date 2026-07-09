@@ -1,5 +1,6 @@
 [requires]
-nanofix/1.0.0
+# Range: the package version is git-derived, a fixed pin only matches tagged commits.
+nanofix/[>=0.0.0]
 
 [generators]
 CMakeDeps

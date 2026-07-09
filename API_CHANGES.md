@@ -192,6 +192,13 @@ trailing message can be re-fed on the next read.
   and clear the counter, `set_assert_handler()` installs a callback,
   `-DNANOFIX_ASSERT_FAILFAST` traps. `NANOFIX_ASSERT` is defined unconditionally;
   customize via `set_assert_handler`, not by redefining the macro.
+- **Version macros** — `NANOFIX_VERSION` (string, e.g. `1.2.3` or
+  `1.2.3+5.gabc1234` on dev builds) and `NANOFIX_VERSION_MAJOR` / `_MINOR` /
+  `_PATCH` (ints) in the generated, gitignored `nanofix/detail/version.hpp`,
+  available through `<nanofix.hpp>`. Version truth is the latest `v*` git tag
+  (`git describe`); CMake configure or `scripts/gen-version.sh` generates the
+  header, and CI cross-checks the CMake / script / Conan derivations. Upstream
+  had no compile-time version identification.
 - Class names you already use are unchanged (`message_reader`,
   `message_writer`, `field_value`, `field`). Added: `indexed_message`,
   `group_view`, `group_entry`, `message_range`, the caller-sized buffer
@@ -237,6 +244,9 @@ if (!writer.push_back_trailer()) return too_small();
 
 - C++20 required; the old `__cplusplus` guards are gone.
 - CMake + Conan 2. Tests use GoogleTest, benchmarks use Google Benchmark.
+- `cmake --install` exports a relocatable CMake package
+  (`find_package(nanofix CONFIG)` → `nanofix::nanofix` + `nanofix_generate()`),
+  so plain-CMake consumers do not need Conan.
 - `fixspec-gen` was rewritten from Haskell to C++ (pugixml) and takes
   QuickFIX-format XML (`fixspec/FIX50SP2.xml` + `FIXT11.xml`). No Cabal.
 - `fixgen` generates the synthetic dataset the benchmarks run on.

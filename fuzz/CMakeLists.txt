@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 project(nanofix-fuzz LANGUAGES CXX)
 
+# Standalone project: generate detail/version.hpp (nanofix.hpp includes it).
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nanofix-version.cmake)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

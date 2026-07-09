@@ -2252,3 +2252,18 @@ TEST(Regression, timepointtoparts_nano_roundtrip_through_writer_reader) {
     ASSERT_TRUE(back.has_value());
     EXPECT_EQ(back.value(), 1'700'000'000'123'456'789LL);
 }
+
+TEST(NanofixTest, version_macros) {
+    static_assert(NANOFIX_VERSION_MAJOR >= 0);
+    static_assert(NANOFIX_VERSION_MINOR >= 0);
+    static_assert(NANOFIX_VERSION_PATCH >= 0);
+    // Optional suffix past the triple is git build metadata ("+5.gabc1234").
+    std::string const base = std::to_string(NANOFIX_VERSION_MAJOR) + "." +
+                             std::to_string(NANOFIX_VERSION_MINOR) + "." +
+                             std::to_string(NANOFIX_VERSION_PATCH);
+    std::string_view const full = NANOFIX_VERSION;
+    ASSERT_GE(full.size(), base.size());
+    EXPECT_EQ(full.substr(0, base.size()), base);
+    if (full.size() > base.size())
+        EXPECT_EQ(full[base.size()], '+');
+}
