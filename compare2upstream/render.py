@@ -3,16 +3,23 @@
 
     render.py [--tables LIST] LABEL=PATH [LABEL=PATH ...]
 
-The first column (conventionally `upstream`) is the baseline for deltas. Four
-compact tables: write/read latency and throughput on the iterator path, then
-the new access path (build_field_index) vs the upstream iterator as both
-latency and throughput. Not a full per-path dump — the detailed benches live in
-`benchmarks/` and are read from raw GB output."""
+The first column (conventionally `upstream`) is the baseline for deltas. Five
+compact tables: write/read latency and throughput on the iterator path, the
+new access path (build_field_index) vs the upstream iterator as both latency
+and throughput, and the index amortization break-even. Not a full per-path
+dump — the detailed benches live in `benchmarks/` and are read from raw GB
+output.
+
+`--out PATH` additionally writes the rendered markdown to PATH; `--header
+TEXT` prepends TEXT (verbatim markdown) to both outputs."""
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
+import re
 import sys
 from typing import Optional
 
@@ -33,14 +40,12 @@ def load(path: str) -> dict[str, dict[str, float]]:
             "max_ns": float(b.get("max_ns", 0.0)),
         }
 
-    # Prefer `_mean` aggregates (emitted when --benchmark_repetitions >= 2).
     for b in benches:
         if b.get("aggregate_name") != "mean":
             continue
         name = b.get("run_name") or b["name"].rsplit("_", 1)[0]
         out[name] = row(b)
 
-    # Fall back to the single iteration row when no mean exists (reps == 1).
     for b in benches:
         if b.get("aggregate_name") or b.get("run_type") != "iteration":
             continue
@@ -102,8 +107,6 @@ def col_by_label(columns: list[tuple[str, dict]], label: str) -> Optional[dict]:
     return None
 
 
-# (label, bench-key, metric, unit). Lower is better for every latency row.
-# Iterator path throughout: write a NewOrder, read a fixed tag set per message.
 LATENCY_ROWS = [
     ("Write p99",      "BM_Write_TailLatency",                            "p99_ns",  "ns"),
     ("Write p999",     "BM_Write_TailLatency",                            "p999_ns", "ns"),
@@ -138,8 +141,6 @@ def render_latency(columns: list[tuple[str, dict]]) -> None:
     emit(["Benchmark"] + [lbl for lbl, _ in columns], out)
 
 
-# (label, bench-key, source). source "ips" = items_per_second; "inv_ns" =
-# 1e9 / cpu_time (per-message msgs/s for the write bench, which times one msg).
 THROUGHPUT_ROWS = [
     ("Write (NewOrder)", "BM_WriteNewOrder",                   "inv_ns"),
     ("Read seq",         "BM_Parse_Sequential_Iter/synthetic", "ips"),
@@ -178,10 +179,6 @@ def render_throughput(columns: list[tuple[str, dict]]) -> None:
     emit(["Benchmark"] + [lbl for lbl, _ in columns], out)
 
 
-# Each row: (label, upstream-iterator key, fork-indexed key). Same workload
-# (read a fixed tag set per message); the latency table reports its tail
-# percentiles, the throughput table its message rate. The index path is shown
-# SIMD-on (fork) and SIMD-off (fork-no-simd) to isolate SIMD's contribution.
 NEWAPI_LATENCY_ROWS = [
     ("Read seq p99",
      "BM_Parse_TailLatency_Sequential_Iter/synthetic",
@@ -277,6 +274,61 @@ def render_newapi_throughput(columns: list[tuple[str, dict]]) -> None:
     emit(NEWAPI_HEADERS, out)
 
 
+FINDN_RE = re.compile(r"^BM_Parse_FindN_(Iter|Indexed)/(\d+)/synthetic$")
+
+
+def _findn_curve(col: dict) -> dict[int, dict[str, float]]:
+    """{n: {"Iter": ns_per_msg, "Indexed": ns_per_msg}}, n ascending."""
+    curve: dict[int, dict[str, float]] = {}
+    for key, entry in col.items():
+        m = FINDN_RE.match(key)
+        if not m:
+            continue
+        ips = entry.get("items_per_second", 0.0)
+        if ips > 0:
+            curve.setdefault(int(m.group(2)), {})[m.group(1)] = 1e9 / ips
+    return dict(sorted(curve.items()))
+
+
+def _break_even(curve: dict[int, dict[str, float]]) -> Optional[str]:
+    pts = [(n, v["Iter"] - v["Indexed"]) for n, v in curve.items()
+           if "Iter" in v and "Indexed" in v]
+    if len(pts) < 2:
+        return None
+    if pts[0][1] >= 0:
+        return f"<= {pts[0][0]}"
+    for (n0, d0), (n1, d1) in zip(pts, pts[1:]):
+        if d1 >= 0:
+            x = n0 + (n1 - n0) * (-d0) / (d1 - d0)
+            return f"~{x:.1f}"
+    return f"> {pts[-1][0]}"
+
+
+def render_amortization(columns: list[tuple[str, dict]]) -> None:
+    rows, lo, hi = [], None, None
+    for label, col in columns:
+        curve = {n: v for n, v in _findn_curve(col).items()
+                 if "Iter" in v and "Indexed" in v}
+        be = _break_even(curve)
+        if be is None:
+            continue
+        ns = sorted(curve)
+        lo, hi = ns[0], ns[-1]
+        rows.append([f"`{label}`", f"**{be} finds/msg**",
+                     fmt(curve[lo]["Iter"], "ns"), fmt(curve[lo]["Indexed"], "ns"),
+                     fmt(curve[hi]["Iter"], "ns"), fmt(curve[hi]["Indexed"], "ns")])
+    if not rows:
+        return
+    print("Index amortization — how many `find()`s per message before "
+          "`build_field_index` + indexed lookups beat the iterator "
+          "(`find_with_hint`), same binary, same messages (per-message ns). "
+          "Break-even interpolated from `BM_Parse_FindN_{Iter,Indexed}`; "
+          "below it, iterate — above it, index:\n")
+    emit(["Config", "Break-even",
+          f"iter @{lo}", f"indexed @{lo}", f"iter @{hi}", f"indexed @{hi}"],
+         rows)
+
+
 def parse_column(s: str) -> tuple[str, dict]:
     if "=" not in s:
         raise argparse.ArgumentTypeError(f"column spec must be LABEL=PATH, got {s!r}")
@@ -289,6 +341,7 @@ RENDERERS = {
     "throughput": render_throughput,
     "newapi-latency": render_newapi_latency,
     "newapi-throughput": render_newapi_throughput,
+    "amortization": render_amortization,
 }
 
 
@@ -299,13 +352,25 @@ def main(argv: list[str]) -> int:
                     help="Bench JSON columns; first is baseline for deltas.")
     ap.add_argument("--tables", default=",".join(RENDERERS),
                     help=f"Comma list. Options: {','.join(RENDERERS)}. Default: all.")
+    ap.add_argument("--out", help="Also write the rendered markdown to this file.")
+    ap.add_argument("--header", default="",
+                    help="Verbatim markdown prepended to the output.")
     args = ap.parse_args(argv)
     columns: list[tuple[str, dict]] = args.columns
-    for name in [t.strip() for t in args.tables.split(",") if t.strip()]:
-        if name not in RENDERERS:
-            print(f"unknown table: {name!r}", file=sys.stderr)
-            return 2
-        RENDERERS[name](columns)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        if args.header:
+            print(args.header.rstrip() + "\n")
+        for name in [t.strip() for t in args.tables.split(",") if t.strip()]:
+            if name not in RENDERERS:
+                print(f"unknown table: {name!r}", file=sys.stderr)
+                return 2
+            RENDERERS[name](columns)
+    sys.stdout.write(buf.getvalue())
+    if args.out:
+        with open(args.out, "w") as f:
+            f.write(buf.getvalue())
     return 0
 
 

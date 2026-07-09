@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # git describe needs history + tags
+          fetch-depth: 0
       - name: Configure (CMake generates version.hpp)
         run: |
           cmake -S . -B build-version \
@@ -97,6 +97,12 @@ jobs:
             cc: clang
             cxx: clang++
             conan_extra: ""
+          - os: ubuntu-latest
+            compiler: gcc-no-simd
+            cc: gcc
+            cxx: g++
+            conan_extra: ""
+            cmake_extra: "-DNANOFIX_DISABLE_SIMD=ON"
           - os: macos-latest
             compiler: apple-clang
             cc: clang
@@ -173,7 +179,7 @@ jobs:
             ${{ matrix.conan_extra }}
 
       - name: CMake configure
-        run: cmake --preset conan-release
+        run: cmake --preset conan-release ${{ matrix.cmake_extra }}
 
       - name: CMake build
         run: cmake --build build/build/Release --config Release --parallel

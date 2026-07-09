@@ -492,6 +492,51 @@ TEST(NanofixTest, find_all_soh_matches_scalar) {
     }
 }
 
+// Sizes cross the 8-wide and 4-wide vector loops plus the scalar tail; targets
+// mix hit-first / hit-repeated / miss. First-occurrence semantics must match
+// the scalar reference exactly.
+TEST(NanofixTest, find_tag_in_index_matches_scalar) {
+    std::mt19937 rng(456);
+    for (int trial = 0; trial < 400; ++trial) {
+        std::size_t const n = rng() % 70;
+        std::vector<int> tags(n);
+        for (auto& t : tags)
+            t = 1 + static_cast<int>(rng() % 12);             // small range forces duplicates
+        int const target = 1 + static_cast<int>(rng() % 14);  // sometimes absent
+        std::size_t expected = n;
+        for (std::size_t i = 0; i < n; ++i)
+            if (tags[i] == target) {
+                expected = i;
+                break;
+            }
+        EXPECT_EQ(nanofix::detail::find_tag_in_index(tags.data(), n, target), expected)
+            << "trial " << trial << " n " << n << " target " << target;
+        EXPECT_EQ(nanofix::detail::find_tag_in_index_scalar(tags.data(), n, target), expected)
+            << "scalar reference, trial " << trial;
+    }
+}
+
+// Sizes straddle every vector threshold: the AVX2 128/32-byte strides and the
+// NEON 1024-byte scalar cutoff (below it the NEON build never runs vector
+// code, so >= 1024 is the only size that exercises it).
+TEST(NanofixTest, checksum_bytes_matches_scalar) {
+    std::mt19937 rng(789);
+    constexpr std::size_t kSizes[] = {
+        0, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 1023, 1024, 1025, 4096, 4099};
+    for (std::size_t const len : kSizes) {
+        std::vector<char> buf(len ? len : 1);
+        std::uint8_t expected = 0;
+        for (std::size_t i = 0; i < len; ++i) {
+            buf[i] = static_cast<char>(rng());
+            expected = static_cast<std::uint8_t>(expected + static_cast<std::uint8_t>(buf[i]));
+        }
+        EXPECT_EQ(nanofix::detail::checksum_bytes(buf.data(), buf.data() + len), expected)
+            << "len " << len;
+        EXPECT_EQ(nanofix::detail::checksum_bytes_scalar(buf.data(), buf.data() + len), expected)
+            << "scalar reference, len " << len;
+    }
+}
+
 namespace {
 char const* g_last_assert_msg = nullptr;
 }

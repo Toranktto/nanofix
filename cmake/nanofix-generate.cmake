@@ -1,17 +1,5 @@
-# nanofix_generate(TARGET <tgt> SPEC_XML <xml> [<xml> ...])
-#
-# Regenerates nanofix/detail/fields.hpp + nanofix/names.hpp from QuickFIX-format
-# XML, into an `nanofix/` subdir of the generated dir which is prepended to
-# TARGET includes so the generated headers (consumed as
-# `#include <nanofix/detail/fields.hpp>` etc.) shadow the bundled ones.
-#
-# Tool lookup: in-tree target, imported nanofix::fixspec-gen, binary at
-# ../../bin/ relative to this file.
-
 if(NOT TARGET fixspec-gen AND NOT TARGET nanofix::fixspec-gen)
     set(_nanofix_fixspec_gen_path "")
-    # Conan: share/nanofix/cmake/<this>.cmake + bin/fixspec-gen.
-    # Flat install: cmake/<this>.cmake + bin/fixspec-gen.
     foreach(_c IN ITEMS
             "${CMAKE_CURRENT_LIST_DIR}/../../../bin/fixspec-gen"
             "${CMAKE_CURRENT_LIST_DIR}/../../../bin/fixspec-gen.exe"

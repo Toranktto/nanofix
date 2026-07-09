@@ -350,16 +350,21 @@ What it does:
    `--benchmark_filter` that selects **only the benches the overview table
    consumes** (`BENCH_FILTER` in `run.sh`) — not the whole suite. Writes JSON
    to `compare2upstream/results/`.
-5. `compare2upstream/render.py` prints a **small README overview**, four
+5. `compare2upstream/render.py` prints a **small README overview**, five
    compact tables
-   (`--tables latency,throughput,newapi-latency,newapi-throughput`):
-   write/read latency (p99/p999) and throughput on the iterator path; then the
+   (`--tables latency,throughput,newapi-latency,newapi-throughput,amortization`):
+   write/read latency (p99/p999) and throughput on the iterator path; the
    new access path (`build_field_index`) vs the upstream iterator as both
    latency (p99/p999) and throughput, shown SIMD-on (`fork`)
-   and SIMD-off (`fork-no-simd`). Write throughput is derived in
+   and SIMD-off (`fork-no-simd`); and the index amortization break-even —
+   the per-message `find()` count at which `build_field_index` + indexed
+   lookups overtake the iterator, interpolated from
+   `BM_Parse_FindN_{Iter,Indexed}`. Write throughput is derived in
    `render.py` as `1e9 / cpu_time` from the single-message `BM_WriteNewOrder`.
    It is deliberately NOT the full per-path dump — detailed analysis comes from
-   the raw `benchmarks/` GB output.
+   the raw `benchmarks/` GB output. `run.sh` also writes the rendered tables to
+   an arch-named committed snapshot next to itself (`ARM64.md` / `X64.md`, by
+   `uname -m`), linked from the README's "Indicative numbers" section.
 
 Override URL / ref / timing via env: `NANOFIX_UPSTREAM_URL`,
 `NANOFIX_UPSTREAM_REF`, `NANOFIX_BENCH_MIN_TIME`,

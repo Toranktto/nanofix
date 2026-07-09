@@ -1,9 +1,3 @@
-# Sets NANOFIX_VERSION_FULL / NANOFIX_VERSION_BASE from git and writes the
-# gitignored include/nanofix/detail/version.hpp:
-#   v1.2.3 -> 1.2.3; v1.2.3-5-gabc1234 -> 1.2.3+5.gabc1234;
-#   no tag -> 0.0.0+g<sha>; no git -> NANOFIX_VERSION_OVERRIDE or 0.0.0.
-# Keep in sync with scripts/gen-version.sh and conanfile.py.
-
 get_filename_component(_nanofix_root "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 if(DEFINED NANOFIX_VERSION_OVERRIDE AND NOT "${NANOFIX_VERSION_OVERRIDE}" STREQUAL "")

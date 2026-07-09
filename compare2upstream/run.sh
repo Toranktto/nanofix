@@ -85,10 +85,10 @@ if ! ls "${DATA_DIR}"/*.fix > /dev/null 2>&1; then
     cmake --build "${BUILD}/fork" --target bench_data
 fi
 
-# Only the benches the README overview table consumes — keep the differential
-# run fast and focused. Anchored alternation; benches absent from a config
-# (upstream has no indexed path) are simply not matched there.
-BENCH_FILTER='^(BM_WriteNewOrder|BM_Write_TailLatency|BM_Parse_(Sequential|Random)_(Iter|Indexed)|BM_Parse_TailLatency_(Sequential|Random)_(Iter|Indexed))(/.*)?$'
+# Only the benches the overview tables consume — keep the differential run
+# fast and focused. Anchored alternation; benches absent from a config
+# (upstream has no indexed path, no FindN) are simply not matched there.
+BENCH_FILTER='^(BM_WriteNewOrder|BM_Write_TailLatency|BM_Parse_(Sequential|Random)_(Iter|Indexed)|BM_Parse_TailLatency_(Sequential|Random)_(Iter|Indexed)|BM_Parse_FindN_(Iter|Indexed))(/.*)?$'
 
 BENCH_ARGS=(
     --benchmark_min_time="${MIN_TIME}"
@@ -129,9 +129,31 @@ for cfg in "${CONFIGS[@]}"; do
     RENDER_ARGS+=("${label}=${json}")
 done
 
+# Rendered tables also land in an arch-named markdown file at the repo root
+# (committed, linked from the README "Indicative numbers" section):
+# ARM64.md / X86_64.md.
+case "$(uname -m)" in
+    arm64 | aarch64) ARCH_MD=ARM64.md ;;
+    x86_64 | amd64) ARCH_MD=X86_64.md ;;
+    *) ARCH_MD="$(uname -m).md" ;;
+esac
+
+PINNED_NOTE="unpinned"
+[[ ${#PIN[@]} -gt 0 ]] && PINNED_NOTE="pinned to cpu ${NANOFIX_BENCH_CPU}"
+HEADER="# Benchmark overview — $(uname -m)
+
+> $(uname -sr), $(uname -m), ${PINNED_NOTE}. Generated $(date +%Y-%m-%d) by
+> \`compare2upstream/run.sh\` (\`min_time=${MIN_TIME}\`,
+> \`repetitions=${REPS}\`; cells are means over repetitions). \`fork\` is
+> nanofix; \`fork-no-simd\` is the same code with \`NANOFIX_DISABLE_SIMD\`;
+> \`upstream\` is jamesdbrock/hffix. Unpinned numbers are indicative only —
+> authoritative A/B comes from a pinned, isolated Linux core
+> (\`NANOFIX_BENCH_CPU=<cpu>\`, governor \`performance\`, \`isolcpus\`)."
+
 echo
 echo "================================================================"
-echo "min_time=${MIN_TIME}  repetitions=${REPS}"
+echo "min_time=${MIN_TIME}  repetitions=${REPS}  ->  ${ROOT}/${ARCH_MD}"
 echo "================================================================"
 echo
-"${PYTHON_BIN}" "${BASE}/render.py" "${RENDER_ARGS[@]}"
+"${PYTHON_BIN}" "${BASE}/render.py" "${RENDER_ARGS[@]}" \
+    --header "${HEADER}" --out "${ROOT}/${ARCH_MD}"
