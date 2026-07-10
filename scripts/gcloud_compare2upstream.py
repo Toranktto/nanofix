@@ -11,10 +11,10 @@ deletes the VM — also on failure; --keep to skip deletion for debugging.
 Requires an authenticated gcloud CLI with Compute Engine enabled on the
 project. The VM needs outbound network (apt, pip, github clone of upstream).
 
-  compare2upstream/gcloud_run.py --project <gcp-project> \
+  scripts/gcloud_compare2upstream.py --project <gcp-project> \
       [--zone europe-west4-a] [--machine-type c2-standard-4] \
-      [--min-time 1s] [--repetitions 5] [--messages 500000] \
-      [--spot] [--keep] > GCLOUD_X86_64.md
+      [--min-time 1s] [--repetitions 5] \
+      [--spot] [--keep]
 
 C2 (Cascade Lake) has stable all-core clocks, AVX2, and dedicated physical
 cores, and the guest-side isolation keeps kthreads/IRQs/tick off the bench
@@ -34,6 +34,8 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 
 ISOLATE_SCRIPT = """
 set -euxo pipefail
+# quoted heredoc: $GRUB_CMDLINE_LINUX_DEFAULT must reach the file unexpanded
+# (update-grub sources it after the distro defaults set that variable)
 sudo tee /etc/default/grub.d/99-bench-isol.cfg >/dev/null <<'EOF'
 GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT isolcpus={cpu} nohz_full={cpu} rcu_nocbs={cpu} irqaffinity=0"
 EOF
@@ -50,19 +52,18 @@ python3 -m venv ~/venv
 ~/venv/bin/pip install --quiet 'conan==2.30.0'
 export PATH=~/venv/bin:$PATH
 
-mkdir -p ~/nanofix && cd ~/nanofix
+rm -rf ~/nanofix && mkdir ~/nanofix && cd ~/nanofix
 tar xzf ~/nanofix.tar.gz
-# run.sh resolves the repo root via git; the tarball ships without .git.
 git init -q && git add -A -f && git -c user.email=bench@local -c user.name=bench commit -qm bench
 
 conan profile detect --force > /dev/null
 
+grep -qx '{cpu}' /sys/devices/system/cpu/isolated
 {{ nproc; grep -m1 'model name' /proc/cpuinfo; \
    echo "isolated: $(cat /sys/devices/system/cpu/isolated)"; }} >&2
 NANOFIX_BENCH_CPU={cpu} \
 NANOFIX_BENCH_MIN_TIME={min_time} \
 NANOFIX_BENCH_REPETITIONS={reps} \
-NANOFIX_BENCH_MESSAGES={messages} \
     compare2upstream/run.sh
 """
 
@@ -80,17 +81,17 @@ def gcloud(args, base, **kw):
     return run(["gcloud", "compute"] + args + base, **kw)
 
 
-def wait_ssh(name, base, timeout):
+def wait_ssh(name, base, timeout, command="true"):
     deadline = time.monotonic() + timeout
     while True:
         try:
-            gcloud(["ssh", name, "--command", "true"], base,
+            gcloud(["ssh", name, "--command", command], base,
                    timeout=60,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             if time.monotonic() > deadline:
-                raise RuntimeError("VM never became SSH-reachable")
+                raise RuntimeError(f"VM never satisfied: {command}")
             time.sleep(10)
 
 
@@ -101,7 +102,8 @@ def main():
     ap.add_argument("--machine-type", default="c2-standard-4")
     ap.add_argument("--min-time", default="1s")
     ap.add_argument("--repetitions", default="5")
-    ap.add_argument("--messages", default="500000")
+    ap.add_argument("--results-dir", default="",
+                    help="fetch the per-round bench JSONs into this local dir")
     ap.add_argument("--spot", action="store_true",
                     help="SPOT provisioning (cheaper, may be preempted mid-run)")
     ap.add_argument("--keep", action="store_true",
@@ -115,18 +117,21 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         tarball = pathlib.Path(tmp) / "nanofix.tar.gz"
-        files = subprocess.run(
+        listed = subprocess.run(
             ["git", "-C", REPO, "ls-files", "-co", "--exclude-standard", "-z"],
             check=True, capture_output=True).stdout
+
+        files = [f for f in listed.split(b"\0") if f and (REPO / f.decode()).exists()]
         run(["tar", "-C", REPO, "--null", "-T", "-", "-czf", tarball],
-            input=files)
+            input=b"\0".join(files) + b"\0")
 
         create = ["instances", "create", name,
                   "--machine-type", args.machine_type,
                   "--threads-per-core", "1",
                   "--image-family", "ubuntu-2404-lts-amd64",
                   "--image-project", "ubuntu-os-cloud",
-                  "--boot-disk-size", "50GB"]
+                  "--boot-disk-size", "50GB",
+                  "--boot-disk-type", "pd-balanced"]
         if args.spot:
             create += ["--provisioning-model", "SPOT",
                        "--instance-termination-action", "DELETE"]
@@ -138,26 +143,37 @@ def main():
             gcloud(["ssh", name, "--command", "bash -s"], base,
                    input=ISOLATE_SCRIPT.format(cpu=1).encode(), timeout=300,
                    stdout=sys.stderr)
-            # reboot kills the SSH connection; a non-zero exit is expected
-            subprocess.run(["gcloud", "compute", "ssh", name,
-                            "--command", "sudo reboot"] + base,
-                           check=False, timeout=60,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # reboot kills the SSH connection; error/timeout is expected
+            try:
+                subprocess.run(["gcloud", "compute", "ssh", name,
+                                "--command", "sudo reboot"] + base,
+                               check=False, timeout=60,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except subprocess.TimeoutExpired:
+                pass
             time.sleep(15)
-            wait_ssh(name, base, args.ssh_timeout)
+
+            wait_ssh(name, base, args.ssh_timeout,
+                     "grep -qx 1 /sys/devices/system/cpu/isolated")
 
             gcloud(["scp", str(tarball), f"{name}:~/nanofix.tar.gz"], base,
                    stdout=sys.stderr)
 
             script = REMOTE_SCRIPT.format(
-                cpu=1, min_time=args.min_time, reps=args.repetitions,
-                messages=args.messages)
+                cpu=1, min_time=args.min_time, reps=args.repetitions)
 
             bench = gcloud(["ssh", name, "--command", "bash -s"], base,
                            input=script.encode(), timeout=args.bench_timeout,
                            stdout=subprocess.PIPE)
             sys.stdout.write(bench.stdout.decode())
             sys.stdout.flush()
+
+            # raw per-round JSONs, for post-hoc noise/regression analysis
+            if args.results_dir:
+                pathlib.Path(args.results_dir).mkdir(parents=True, exist_ok=True)
+                gcloud(["scp", f"{name}:~/nanofix/compare2upstream/results/*.json",
+                        args.results_dir], base, stdout=sys.stderr)
         finally:
             if args.keep:
                 log(f"keeping VM {name} ({args.zone}); delete it yourself:")
