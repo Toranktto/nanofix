@@ -372,6 +372,10 @@ What it does:
    the committed snapshots at the repo root (`ARM64.md` / `X86_64.md`, linked
    from the README's "Indicative numbers" section) are captured by
    redirecting: `compare2upstream/run.sh > ARM64.md`.
+   `compare2upstream/gcloud_run.py` runs the same harness on a fresh GCE
+   x86-64 VM (SMT off, bench core isolated via `isolcpus`/`nohz_full`/
+   `rcu_nocbs` + reboot, pinned to it, VM deleted afterwards) and prints the
+   tables the same way: `gcloud_run.py --project <p> > GCLOUD_X86_64.md`.
 
 Override URL / ref / timing via env: `NANOFIX_UPSTREAM_URL`,
 `NANOFIX_UPSTREAM_REF`, `NANOFIX_BENCH_MIN_TIME`,
