@@ -429,18 +429,33 @@ Version truth is **git**: the latest reachable `v*` tag via `git describe`.
 `v1.2.3` → `1.2.3`; commits after the tag → `1.2.3+5.gabc1234` (git suffix as
 semver build metadata, so Conan version ranges still match the base); no tag →
 `0.0.0+g<sha>` with a warning. Releasing = `git tag -a vX.Y.Z && git push
---tags` — nothing version-related is committed.
+--tags`.
 
-`include/nanofix/detail/version.hpp` (the `NANOFIX_VERSION*` macros) is
-**generated and gitignored** — never commit or hand-edit it. Three places
-implement the same derivation and must stay in sync (CI's `version` job
-cross-checks them): `cmake/nanofix-version.cmake` (runs before `project()`;
-also included by the standalone `fuzz/` project; pure CMake so Windows needs
-no shell), `scripts/gen-version.sh` (`--print` / `--check` / write), and
-`_git_version()` in `conanfile.py` (`set_version()`; the resolved version is
-passed into the cache build as `-DNANOFIX_VERSION_OVERRIDE` because the Conan
-source copy has no `.git`). The examples' `conanfile.txt` require
-`nanofix/[>=0.0.0]` — a fixed pin would only resolve on tagged commits.
+The real `version.hpp` (the `NANOFIX_VERSION*` macros) is **generated into the
+build tree** at configure time
+(`<build>/nanofix-generated/include/nanofix/detail/version.hpp`); the
+committed `include/nanofix/detail/version.hpp` is a `0.0.0+unknown` **stub**
+for builds that bypass CMake. The generated dir sits before the source
+include dir on every target (`NANOFIX_VERSION_INCLUDE_DIR` from
+`cmake/nanofix-version.cmake`), so the generated header shadows the stub, and
+`cmake --install` ships the generated one in place of the stub. Never write a
+real version into the stub.
+
+Two implementations of the derivation, one header template:
+`cmake/nanofix-version.cmake` (runs before `project()`; also included by the
+standalone `fuzz/` project; pure CMake because configure must work with no
+shell or Python installed) and `scripts/gen_version.py` (`git_version()` +
+`render_header()`; doubles as the CLI — `--print` / `--check <header>` /
+`<output>` write; never touches the stub). CI's `version` job cross-checks
+the two. Both render `cmake/version.hpp.in` — the only place the header text
+lives. `conanfile.py` has no derivation of its own: it loads
+`scripts/gen_version.py` (exported next to the recipe via `exports`) for
+`set_version()`, passes the resolved version into the cache build as
+`-DNANOFIX_VERSION_OVERRIDE` (the Conan source copy has no `.git`), and its
+`export_sources()` stamps the rendered header over the stub in the exported
+source copy, so the export is self-contained even before the CMake install
+regenerates it. The examples' `conanfile.txt` require `nanofix/[>=0.0.0]` — a
+fixed pin would only resolve on tagged commits.
 
 ## Formatting
 

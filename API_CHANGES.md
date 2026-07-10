@@ -194,11 +194,12 @@ trailing message can be re-fed on the next read.
   customize via `set_assert_handler`, not by redefining the macro.
 - **Version macros** — `NANOFIX_VERSION` (string, e.g. `1.2.3` or
   `1.2.3+5.gabc1234` on dev builds) and `NANOFIX_VERSION_MAJOR` / `_MINOR` /
-  `_PATCH` (ints) in the generated, gitignored `nanofix/detail/version.hpp`,
-  available through `<nanofix.hpp>`. Version truth is the latest `v*` git tag
-  (`git describe`); CMake configure or `scripts/gen-version.sh` generates the
-  header, and CI cross-checks the CMake / script / Conan derivations. Upstream
-  had no compile-time version identification.
+  `_PATCH` (ints) in `nanofix/detail/version.hpp`, available through
+  `<nanofix.hpp>`. Version truth is the latest `v*` git tag (`git describe`);
+  CMake configure generates the real header into the build tree (installed
+  with the package), the committed header is a `0.0.0+unknown` stub for
+  non-CMake use, and CI cross-checks the CMake and Python derivations.
+  Upstream had no compile-time version identification.
 - Class names you already use are unchanged (`message_reader`,
   `message_writer`, `field_value`, `field`). Added: `indexed_message`,
   `group_view`, `group_entry`, `message_range`, the caller-sized buffer

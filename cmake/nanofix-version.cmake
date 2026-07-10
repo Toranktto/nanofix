@@ -48,9 +48,14 @@ set(NANOFIX_VERSION_PATCH "${CMAKE_MATCH_3}")
 set(NANOFIX_VERSION_BASE
     "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
 
+# The generated header lives in the build tree, never in the source tree; the
+# committed include/nanofix/detail/version.hpp is a 0.0.0+unknown stub for
+# builds that bypass CMake. Callers put NANOFIX_VERSION_INCLUDE_DIR ahead of
+# the source include dir so the generated header wins.
+set(NANOFIX_VERSION_INCLUDE_DIR "${CMAKE_BINARY_DIR}/nanofix-generated/include")
 configure_file(
     "${CMAKE_CURRENT_LIST_DIR}/version.hpp.in"
-    "${_nanofix_root}/include/nanofix/detail/version.hpp"
+    "${NANOFIX_VERSION_INCLUDE_DIR}/nanofix/detail/version.hpp"
     @ONLY)
 
 unset(_nanofix_root)

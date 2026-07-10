@@ -353,8 +353,9 @@ Deployment notes, roughly in priority order:
 - **Pin a release.** `NANOFIX_VERSION` / `NANOFIX_VERSION_{MAJOR,MINOR,PATCH}`
   (via `<nanofix.hpp>`) identify the header set at compile time. Version truth
   is git: the latest `v*` tag (`git describe`), with dev builds stamped
-  `X.Y.Z+<n>.g<sha>`. `nanofix/detail/version.hpp` is generated (CMake
-  configure or `scripts/gen-version.sh`) and gitignored.
+  `X.Y.Z+<n>.g<sha>`. `nanofix/detail/version.hpp` is generated into the
+  build tree at CMake configure and installed with the package; the committed
+  header is a `0.0.0+unknown` stub for builds that bypass CMake.
 - **Benchmark on your hardware.** The tables above are unpinned macOS. Before
   acting on a number, reproduce it on a pinned, isolated Linux core:
   `NANOFIX_BENCH_CPU=<core> compare2upstream/run.sh`.

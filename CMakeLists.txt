@@ -92,7 +92,9 @@ endif()
 
 add_library(nanofix INTERFACE)
 add_library(nanofix::nanofix ALIAS nanofix)
+# Generated dir first: its version.hpp must shadow the committed stub.
 target_include_directories(nanofix INTERFACE
+    $<BUILD_INTERFACE:${NANOFIX_VERSION_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
@@ -114,6 +116,9 @@ endif()
 
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+# After the directory copy, so the generated version.hpp replaces the stub.
+install(FILES ${NANOFIX_VERSION_INCLUDE_DIR}/nanofix/detail/version.hpp
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nanofix/detail)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/nanofix-generate.cmake)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/nanofix-generate.cmake
