@@ -367,9 +367,9 @@ def main(argv: list[str]) -> int:
                 print(f"unknown table: {name!r}", file=sys.stderr)
                 return 2
             RENDERERS[name](columns)
-    sys.stdout.write(buf.getvalue())
+    sys.stdout.buffer.write(buf.getvalue().encode("utf-8"))
     if args.out:
-        with open(args.out, "w") as f:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as f:
             f.write(buf.getvalue())
     return 0
 
