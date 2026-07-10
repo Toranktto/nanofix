@@ -96,42 +96,42 @@ void BM_WriteNewOrder_Closure(benchmark::State& state) {
 }
 
 // Per-message write latency distribution: serialize one NewOrderSingle, sample
-// the wall time, repeat. Counters carry the ~20-30 ns clock::now() probe, so
-// absolute p* are inflated by that fixed cost; the shape and relative spread
+// the time, repeat. Counters carry the latency_probe cost (RDTSCP ~5-10 cycles
+// on x86-64, steady_clock ~20-30 ns elsewhere); the shape and relative spread
 // are what matter. Mirrors BM_Parse_TailLatency on the read side.
 void BM_Write_TailLatency(benchmark::State& state) {
-    using clk = std::chrono::steady_clock;
+    namespace probe = nanofix_bench::latency_probe;
     char buffer[kBufSize];
     auto tsend = live_timestamp();
     benchmark::DoNotOptimize(tsend);
     constexpr int kBatch = 4096;
     std::vector<std::uint64_t> samples;
     samples.reserve(1u << 20);
+    probe::calibrate();
     for (auto _ : state) {
         state.PauseTiming();
         samples.clear();
         state.ResumeTiming();
         for (int i = 0; i < kBatch; ++i) {
-            auto t0 = clk::now();
+            std::uint64_t const t0 = probe::now();
             std::size_t n = write_new_order(buffer, sizeof(buffer), i, tsend);
-            auto t1 = clk::now();
+            std::uint64_t const t1 = probe::now();
             benchmark::DoNotOptimize(buffer);
             benchmark::DoNotOptimize(n);
-            samples.push_back(static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()));
+            samples.push_back(t1 - t0);
         }
     }
     state.PauseTiming();
     std::sort(samples.begin(), samples.end());
     auto pct = [&](double q) -> double {
         std::size_t i = static_cast<std::size_t>(q * static_cast<double>(samples.size() - 1));
-        return static_cast<double>(samples[i]);
+        return probe::to_ns(samples[i]);
     };
     state.counters["p50_ns"] = pct(0.50);
     state.counters["p95_ns"] = pct(0.95);
     state.counters["p99_ns"] = pct(0.99);
     state.counters["p999_ns"] = pct(0.999);
-    state.counters["max_ns"] = static_cast<double>(samples.back());
+    state.counters["max_ns"] = probe::to_ns(samples.back());
     state.counters["samples"] = static_cast<double>(samples.size());
 }
 

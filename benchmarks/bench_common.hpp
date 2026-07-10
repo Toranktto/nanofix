@@ -8,10 +8,72 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <thread>
+
+#if defined(__x86_64__) || defined(_M_X64)
+#if defined(_MSC_VER)
+#include <intrin.h>  // __rdtscp; MSVC has no <x86intrin.h>
+#else
+#include <x86intrin.h>
+#endif
+#define NANOFIX_BENCH_HAS_RDTSC 1
+#else
+#define NANOFIX_BENCH_HAS_RDTSC 0
+#endif
 
 namespace nanofix_bench {
 
 inline constexpr std::size_t kBufSize = 1 << 13;
+
+// Per-message probe for the *_TailLatency benches: RDTSCP on x86-64 (~5-10
+// cycles, invariant TSC), steady_clock elsewhere (~20-30 ns on M4). Samples
+// are raw ticks; convert once at the end with to_ns(). The upstream
+// differential suite carries a copy — keep the two byte-identical so the
+// probe cost cancels out of the comparison.
+namespace latency_probe {
+
+#if NANOFIX_BENCH_HAS_RDTSC
+inline std::uint64_t now() noexcept {
+    unsigned aux;
+    return __rdtscp(&aux);
+}
+
+inline double ticks_per_ns() noexcept {
+    static double const k = []() {
+        using namespace std::chrono;
+        unsigned aux;
+        auto t0 = steady_clock::now();
+        std::uint64_t const c0 = __rdtscp(&aux);
+        std::this_thread::sleep_for(milliseconds(80));
+        std::uint64_t const c1 = __rdtscp(&aux);
+        auto t1 = steady_clock::now();
+        auto const ns = duration_cast<nanoseconds>(t1 - t0).count();
+        return ns > 0 ? static_cast<double>(c1 - c0) / static_cast<double>(ns) : 1.0;
+    }();
+    return k;
+}
+#else
+inline std::uint64_t now() noexcept {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
+inline double ticks_per_ns() noexcept {
+    return 1.0;
+}
+#endif
+
+inline double to_ns(std::uint64_t ticks) noexcept {
+    return static_cast<double>(ticks) / ticks_per_ns();
+}
+
+// Run the one-off calibration outside the timed region.
+inline void calibrate() noexcept {
+    (void)ticks_per_ns();
+}
+
+}  // namespace latency_probe
 
 using SysTime = std::chrono::system_clock::time_point;
 

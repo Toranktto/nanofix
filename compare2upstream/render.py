@@ -120,8 +120,8 @@ LATENCY_ROWS = [
 def render_latency(columns: list[tuple[str, dict]]) -> None:
     print("Write/read latency — lower is better; first column is the baseline. "
           "Iterator path (`find_with_hint` over a fixed 20-tag set per "
-          "message); tail percentiles include the ~20-30 ns `clock::now()` "
-          "probe:\n")
+          "message); tail percentiles include the latency probe (RDTSCP "
+          "~5-10 cycles on x86-64, steady_clock ~20-30 ns elsewhere):\n")
     out = []
     for label, key, metric, unit in LATENCY_ROWS:
         entries = [c.get(key) for _, c in columns]
@@ -226,7 +226,8 @@ def render_newapi_latency(columns: list[tuple[str, dict]]) -> None:
           "many tags makes the iterator rescan per lookup, while "
           "`build_field_index` is O(length) regardless of lookup count. Shown "
           "SIMD-on (`fork`) and SIMD-off (`fork-no-simd`). Tail percentiles "
-          "include the ~20-30 ns `clock::now()` probe:\n")
+          "include the latency probe (RDTSCP ~5-10 cycles on x86-64, "
+          "steady_clock ~20-30 ns elsewhere):\n")
     out = []
     for label, up_key, idx_key, metric in NEWAPI_LATENCY_ROWS:
         up = upstream.get(up_key)

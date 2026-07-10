@@ -12,7 +12,19 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
+
+#if defined(__x86_64__) || defined(_M_X64)
+#if defined(_MSC_VER)
+#include <intrin.h>  // __rdtscp; MSVC has no <x86intrin.h>
+#else
+#include <x86intrin.h>
+#endif
+#define NANOFIX_BENCH_HAS_RDTSC 1
+#else
+#define NANOFIX_BENCH_HAS_RDTSC 0
+#endif
 
 #ifndef NANOFIX_BENCH_DATA_DIR
 #define NANOFIX_BENCH_DATA_DIR ""
@@ -21,6 +33,54 @@
 namespace {
 
 constexpr std::size_t kBufSize = 1 << 13;
+
+// Copy of the fork's nanofix_bench::latency_probe (bench_common.hpp) — keep
+// byte-identical so the probe cost cancels out of the fork/upstream
+// comparison. RDTSCP on x86-64, steady_clock elsewhere; raw ticks until
+// to_ns().
+namespace latency_probe {
+
+#if NANOFIX_BENCH_HAS_RDTSC
+inline std::uint64_t now() noexcept {
+    unsigned aux;
+    return __rdtscp(&aux);
+}
+
+inline double ticks_per_ns() noexcept {
+    static double const k = []() {
+        using namespace std::chrono;
+        unsigned aux;
+        auto t0 = steady_clock::now();
+        std::uint64_t const c0 = __rdtscp(&aux);
+        std::this_thread::sleep_for(milliseconds(80));
+        std::uint64_t const c1 = __rdtscp(&aux);
+        auto t1 = steady_clock::now();
+        auto const ns = duration_cast<nanoseconds>(t1 - t0).count();
+        return ns > 0 ? static_cast<double>(c1 - c0) / static_cast<double>(ns) : 1.0;
+    }();
+    return k;
+}
+#else
+inline std::uint64_t now() noexcept {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
+inline double ticks_per_ns() noexcept {
+    return 1.0;
+}
+#endif
+
+inline double to_ns(std::uint64_t ticks) noexcept {
+    return static_cast<double>(ticks) / ticks_per_ns();
+}
+
+inline void calibrate() noexcept {
+    (void)ticks_per_ns();
+}
+
+}  // namespace latency_probe
 
 using SysTime = std::chrono::system_clock::time_point;
 
@@ -193,40 +253,40 @@ void BM_WriteNewOrder(benchmark::State& state) {
 }
 
 // Per-message write latency distribution (matches the fork's BM_Write_TailLatency).
-// Counters carry the ~20-30 ns clock::now() probe; shape/spread are the signal.
+// Counters carry the latency_probe cost (RDTSCP ~5-10 cycles on x86-64,
+// steady_clock ~20-30 ns elsewhere); shape/spread are the signal.
 void BM_Write_TailLatency(benchmark::State& state) {
-    using clk = std::chrono::steady_clock;
     char buffer[kBufSize];
     auto tsend = live_timestamp();
     benchmark::DoNotOptimize(tsend);
     constexpr int kBatch = 4096;
     std::vector<std::uint64_t> samples;
     samples.reserve(1u << 20);
+    latency_probe::calibrate();
     for (auto _ : state) {
         state.PauseTiming();
         samples.clear();
         state.ResumeTiming();
         for (int i = 0; i < kBatch; ++i) {
-            auto t0 = clk::now();
+            std::uint64_t const t0 = latency_probe::now();
             std::size_t n = write_new_order(buffer, sizeof(buffer), i, tsend);
-            auto t1 = clk::now();
+            std::uint64_t const t1 = latency_probe::now();
             benchmark::DoNotOptimize(buffer);
             benchmark::DoNotOptimize(n);
-            samples.push_back(static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()));
+            samples.push_back(t1 - t0);
         }
     }
     state.PauseTiming();
     std::sort(samples.begin(), samples.end());
     auto pct = [&](double q) -> double {
         std::size_t i = static_cast<std::size_t>(q * static_cast<double>(samples.size() - 1));
-        return static_cast<double>(samples[i]);
+        return latency_probe::to_ns(samples[i]);
     };
     state.counters["p50_ns"] = pct(0.50);
     state.counters["p95_ns"] = pct(0.95);
     state.counters["p99_ns"] = pct(0.99);
     state.counters["p999_ns"] = pct(0.999);
-    state.counters["max_ns"] = static_cast<double>(samples.back());
+    state.counters["max_ns"] = latency_probe::to_ns(samples.back());
     state.counters["samples"] = static_cast<double>(samples.size());
 }
 
@@ -369,15 +429,16 @@ void BM_Parse_FindTags(benchmark::State& state, Dataset const* ds) {
     state.SetItemsProcessed(static_cast<int64_t>(total_messages));
 }
 
-// Counters include the clock::now() probe (~20-30 ns on M4); same overhead
-// in every variant, so relative deltas are comparable, absolute p* are not.
+// Counters include the latency_probe cost (RDTSCP ~5-10 cycles on x86-64,
+// steady_clock ~20-30 ns elsewhere); same overhead in every variant, so
+// relative deltas are comparable.
 template <int const* Tags, std::size_t N>
 void BM_Parse_TailLatency_Iter(benchmark::State& state, Dataset const* ds) {
-    using clk = std::chrono::steady_clock;
     char const* begin = ds->data.data();
     char const* end = begin + ds->data.size();
     std::vector<std::uint64_t> samples;
     samples.reserve(1u << 20);
+    latency_probe::calibrate();
     for (auto _ : state) {
         state.PauseTiming();
         samples.clear();
@@ -386,7 +447,7 @@ void BM_Parse_TailLatency_Iter(benchmark::State& state, Dataset const* ds) {
         for (; r.is_complete(); r = r.next_message_reader()) {
             if (!r.is_valid())
                 continue;
-            auto t0 = clk::now();
+            std::uint64_t const t0 = latency_probe::now();
             auto it = r.begin();
             for (std::size_t k = 0; k < N; ++k) {
                 if (r.find_with_hint(Tags[k], it)) {
@@ -394,9 +455,8 @@ void BM_Parse_TailLatency_Iter(benchmark::State& state, Dataset const* ds) {
                     benchmark::DoNotOptimize(v);
                 }
             }
-            auto t1 = clk::now();
-            samples.push_back(static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()));
+            std::uint64_t const t1 = latency_probe::now();
+            samples.push_back(t1 - t0);
         }
     }
     state.PauseTiming();
@@ -407,12 +467,12 @@ void BM_Parse_TailLatency_Iter(benchmark::State& state, Dataset const* ds) {
     std::sort(samples.begin(), samples.end());
     auto pct = [&](double q) -> double {
         std::size_t i = static_cast<std::size_t>(q * (samples.size() - 1));
-        return static_cast<double>(samples[i]);
+        return latency_probe::to_ns(samples[i]);
     };
     state.counters["p95_ns"] = pct(0.95);
     state.counters["p99_ns"] = pct(0.99);
     state.counters["p999_ns"] = pct(0.999);
-    state.counters["max_ns"] = static_cast<double>(samples.back());
+    state.counters["max_ns"] = latency_probe::to_ns(samples.back());
     state.counters["samples"] = static_cast<double>(samples.size());
 }
 
