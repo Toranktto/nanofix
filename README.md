@@ -223,21 +223,19 @@ README-shaped overview — five compact tables, not the full suite:
 ### Indicative numbers
 
 `run.sh` prints the rendered tables to stdout (progress goes to stderr); the
-committed snapshots are captured by redirecting, e.g.
-`compare2upstream/run.sh > ARM64.md`:
+committed snapshot is captured by redirecting, e.g.
+`compare2upstream/run.sh > X86_64.md`:
 
-- **[ARM64.md](ARM64.md)** — Apple M4,
-  macOS, unpinned: **indicative only** (no hard core pinning on macOS, P/E
-  migration mid-run).
-- **[X86_64.md](X86_64.md)** — placeholder until
-  someone runs the harness on a pinned, isolated Linux x86-64 core
-  (`NANOFIX_BENCH_CPU=<cpu> compare2upstream/run.sh`; governor `performance`,
-  `isolcpus`). Those are the authoritative numbers.
+- **[X86_64.md](X86_64.md)** — Intel Cascade Lake (GCE `c2-standard-4`, SMT
+  off), Linux, pinned to a core isolated via `isolcpus`/`nohz_full`; generated
+  by `scripts/gcloud_compare2upstream.py`. Still a VM — no governor/turbo control
+  from the guest — so treat it as one notch below a bare-metal `isolcpus` box.
 
-Headline shape on ARM64: fork writes ~30 % faster and reads ~30-40 % faster
-than upstream on the like-for-like iterator path; the indexed path is ~10-20×
-upstream's read throughput and cuts the read tail by an order of magnitude,
-paying for itself from roughly a handful of `find()`s per message.
+Headline shape on x86-64 (Cascade Lake): fork writes with ~60 % lower tail
+(p99 105 ns vs 247 ns) and ~20 % more throughput than upstream; iterator-path
+reads are like-for-like within a few percent (sequential) to ~+18 % (random);
+the indexed path is ~10-16× upstream's read throughput and cuts the read tail
+by an order of magnitude, paying for itself from ~9 `find()`s per message.
 
 ## Generated spec headers
 
@@ -294,10 +292,9 @@ sweep (`find_all_soh`) behind `build_field_index`, indexed tag lookup
 short serial scan loses to branch-predicted byte compares) and the checksum is
 computed only on demand. So `NANOFIX_DISABLE_SIMD` changes the indexed path,
 not the iterator; on the iterator path SIMD-on vs SIMD-off differ only by binary
-layout, which on a cache-miss-bound random read is run-to-run noise (the
-macOS-unpinned caveat above the benchmark tables applies — the sign of that
-delta flips between runs). Supported: GCC, Clang, AppleClang, MSVC (x86-64 and
-ARM64).
+layout, which on a cache-miss-bound random read is run-to-run noise — the sign
+of that delta flips between runs. Supported: GCC, Clang, AppleClang, MSVC
+(x86-64 and ARM64).
 
 ## Fuzzing
 
@@ -358,8 +355,9 @@ Deployment notes, roughly in priority order:
   `X.Y.Z+<n>.g<sha>`. `nanofix/detail/version.hpp` is generated into the
   build tree at CMake configure and installed with the package; the committed
   header is a `0.0.0+unknown` stub for builds that bypass CMake.
-- **Benchmark on your hardware.** The tables above are unpinned macOS. Before
-  acting on a number, reproduce it on a pinned, isolated Linux core:
+- **Benchmark on your hardware.** The linked tables come from a cloud VM
+  (pinned, `isolcpus`-isolated, but no governor/turbo control). Before acting
+  on a number, reproduce it on the hardware you deploy to:
   `NANOFIX_BENCH_CPU=<core> compare2upstream/run.sh`.
 
 Out of scope by design: session state, sequence numbers, retransmission,

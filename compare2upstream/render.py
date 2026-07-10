@@ -8,10 +8,7 @@ compact tables: write/read latency and throughput on the iterator path, the
 new access path (build_field_index) vs the upstream iterator as both latency
 and throughput, and the index amortization break-even. Not a full per-path
 dump — the detailed benches live in `benchmarks/` and are read from raw GB
-output.
-
-`--out PATH` additionally writes the rendered markdown to PATH; `--header
-TEXT` prepends TEXT (verbatim markdown) to both outputs."""
+output."""
 
 from __future__ import annotations
 

@@ -359,8 +359,8 @@ What it does:
    consumes** (`BENCH_FILTER` in `run.sh`) — not the whole suite. Writes JSON
    to `compare2upstream/results/`.
 5. `compare2upstream/render.py` prints a **small README overview**, five
-   compact tables
-   (`--tables latency,throughput,newapi-latency,newapi-throughput,amortization`):
+   compact tables (render.py's default `--tables` selection —
+   latency, throughput, newapi-latency, newapi-throughput, amortization):
    write/read latency (p99/p999) and throughput on the iterator path; the
    new access path (`build_field_index`) vs the upstream iterator as both
    latency (p99/p999) and throughput, shown SIMD-on (`fork`)
@@ -370,10 +370,12 @@ What it does:
    `BM_Parse_FindN_{Iter,Indexed}`. Write throughput is derived in
    `render.py` as `1e9 / cpu_time` from the single-message `BM_WriteNewOrder`.
    It is deliberately NOT the full per-path dump — detailed analysis comes from
-   the raw `benchmarks/` GB output. Tables go to stdout, progress to stderr;
-   the committed snapshots at the repo root (`ARM64.md` / `X86_64.md`, linked
-   from the README's "Indicative numbers" section) are captured by
-   redirecting: `compare2upstream/run.sh > ARM64.md`.
+   the raw `benchmarks/` GB output. Tail percentiles include the per-message
+   latency probe (RDTSCP on x86-64, steady_clock elsewhere); both suites carry
+   the identical probe so its cost cancels from the comparison. Tables go to
+   stdout, progress to stderr; the committed snapshot at the repo root
+   (`X86_64.md`, linked from the README's "Indicative numbers" section) is
+   captured by redirecting: `compare2upstream/run.sh > X86_64.md`.
    `scripts/gcloud_compare2upstream.py` runs the same harness on a fresh GCE
    x86-64 VM (SMT off, bench core isolated via `isolcpus`/`nohz_full`/
    `rcu_nocbs` + reboot, pinned to it, VM deleted afterwards) and prints the

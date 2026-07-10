@@ -83,7 +83,7 @@ ensure_configured() {
 if ! ls "${DATA_DIR}"/*.fix > /dev/null 2>&1; then
     echo ">> generating dataset (.fix)" >&2
     ensure_configured "${BUILD}/fork" "${ROOT}" ""
-    cmake --build "${BUILD}/fork" --target bench_data
+    cmake --build "${BUILD}/fork" --target bench_data >&2
 fi
 
 BENCH_FILTER='^(BM_WriteNewOrder|BM_Write_TailLatency|BM_Parse_(Sequential|Random)_(Iter|Indexed)|BM_Parse_TailLatency_(Sequential|Random)_(Iter|Indexed)|BM_Parse_FindN_(Iter|Indexed))(/.*)?$'
@@ -129,11 +129,9 @@ HEADER="# Benchmark overview — $(uname -m)
 > \`compare2upstream/run.sh\` (\`min_time=${MIN_TIME}\`,
 > \`repetitions=${REPS}\`; cells are means over repetitions). \`fork\` is
 > nanofix; \`fork-no-simd\` is the same code with \`NANOFIX_DISABLE_SIMD\`;
-> \`upstream\` is jamesdbrock/hffix. Unpinned numbers are indicative only —
-> authoritative A/B comes from a pinned, isolated Linux core
-> (\`NANOFIX_BENCH_CPU=<cpu>\`, governor \`performance\`, \`isolcpus\`)."
+> \`upstream\` is jamesdbrock/hffix."
 
 # Tables go to stdout; everything else this script prints is on stderr, so
-# the committed snapshot is `compare2upstream/run.sh > ARM64.md`.
+# the committed snapshot is `compare2upstream/run.sh > X86_64.md`.
 "${PYTHON_BIN}" "${BASE}/render.py" "${RENDER_ARGS[@]}" \
     --header "${HEADER}"
