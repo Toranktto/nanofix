@@ -101,6 +101,15 @@ target_include_directories(nanofix INTERFACE
 
 if(NANOFIX_DISABLE_SIMD)
     target_compile_definitions(nanofix INTERFACE NANOFIX_DISABLE_SIMD=1)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    # x86-64 baseline is AVX2; config.hpp #errors without __AVX2__. Build
+    # interface only — the installed package applies it in nanofix-config,
+    # at consumer configure time, against the consumer's compiler.
+    if(MSVC)
+        target_compile_options(nanofix INTERFACE $<BUILD_INTERFACE:/arch:AVX2>)
+    else()
+        target_compile_options(nanofix INTERFACE $<BUILD_INTERFACE:-mavx2>)
+    endif()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang"

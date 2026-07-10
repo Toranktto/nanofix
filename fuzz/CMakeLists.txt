@@ -29,6 +29,10 @@ set(_fuzz_flags
     -fno-sanitize-recover=undefined
     -g
     -O1)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    # x86-64 baseline is AVX2 (nanofix config.hpp #errors without __AVX2__).
+    list(APPEND _fuzz_flags -mavx2)
+endif()
 
 add_executable(fuzz_reader fuzz_reader.cpp)
 target_include_directories(fuzz_reader PRIVATE

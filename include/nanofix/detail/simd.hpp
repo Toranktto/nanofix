@@ -11,8 +11,6 @@ namespace nanofix {
 
 namespace detail {
 
-// Whether a wide-stride bulk sweep beats repeated per-field find_soh on
-// FIX's short fields is a measured question, not an assumption — see BM_FindAllSoh.
 NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_scalar(char const* begin,
                                                       char const* end,
                                                       std::uint32_t* NANOFIX_RESTRICT out,
@@ -47,7 +45,7 @@ NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_neon(char const* begin,
         }
         begin += 16;
     }
-    for (; begin < end && n < cap; ++begin)  // tail: offsets stay base-relative
+    for (; begin < end && n < cap; ++begin)
         if (*begin == '\x01')
             out[n++] = static_cast<std::uint32_t>(begin - base);
     return n;
@@ -55,11 +53,10 @@ NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_neon(char const* begin,
 #endif
 
 #ifdef NANOFIX_HAS_AVX2
-NANOFIX_TARGET_AVX2
-inline std::size_t find_all_soh_avx2(char const* begin,
-                                     char const* end,
-                                     std::uint32_t* NANOFIX_RESTRICT out,
-                                     std::size_t cap) noexcept {
+NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_avx2(char const* begin,
+                                                    char const* end,
+                                                    std::uint32_t* NANOFIX_RESTRICT out,
+                                                    std::size_t cap) noexcept {
     char const* const base = begin;
     std::size_t n = 0;
     __m256i const soh = _mm256_set1_epi8(0x01);
@@ -73,7 +70,7 @@ inline std::size_t find_all_soh_avx2(char const* begin,
         }
         begin += 32;
     }
-    for (; begin < end && n < cap; ++begin)  // tail: offsets stay base-relative
+    for (; begin < end && n < cap; ++begin)
         if (*begin == '\x01')
             out[n++] = static_cast<std::uint32_t>(begin - base);
     return n;
@@ -114,11 +111,6 @@ NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_neon(int const* tags,
         int32x4_t const v1 = vld1q_s32(tags + i + 4);
         uint32x4_t const eq0 = vceqq_s32(v0, target);
         uint32x4_t const eq1 = vceqq_s32(v1, target);
-        // vceqq sets a matching lane to all-ones. Pack the eight lanes into one
-        // byte each: vshrn_n_u32(.,16) narrows each 32-bit lane to 0xFFFF/0x0000
-        // (uint16x4), vcombine joins both halves, vshrn_n_u16(.,4) narrows those
-        // to 0xFF/0x00 (uint8x8). One byte per input lane, so countr_zero(bits)
-        // >> 3 (÷8 bits/byte) is the index of the first matching lane.
         uint16x8_t const combined = vcombine_u16(vshrn_n_u32(eq0, 16), vshrn_n_u32(eq1, 16));
         std::uint64_t const bits = vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(combined, 4)), 0);
         if (bits) [[unlikely]]
@@ -128,8 +120,6 @@ NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_neon(int const* tags,
     while (i + 4 <= n) {
         int32x4_t const v = vld1q_s32(tags + i);
         uint32x4_t const eq = vceqq_s32(v, target);
-        // Same narrowing, one stage: 0xFFFF/0x0000 per 16-bit slot, so
-        // countr_zero(bits) >> 4 (÷16 bits/lane) is the matching lane index.
         std::uint64_t const bits = vget_lane_u64(vreinterpret_u64_u16(vshrn_n_u32(eq, 16)), 0);
         if (bits) [[unlikely]]
             return i + (std::countr_zero(bits) >> 4);
@@ -144,8 +134,9 @@ NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_neon(int const* tags,
 #endif
 
 #ifdef NANOFIX_HAS_AVX2
-NANOFIX_TARGET_AVX2
-inline std::size_t find_tag_in_index_avx2(int const* tags, std::size_t n, int tag) noexcept {
+NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_avx2(int const* tags,
+                                                         std::size_t n,
+                                                         int tag) noexcept {
     std::size_t i = 0;
     __m256i const target = _mm256_set1_epi32(tag);
     while (i + 8 <= n) {
@@ -220,8 +211,7 @@ NANOFIX_ALWAYS_INLINE std::uint8_t checksum_bytes_neon(char const* begin, char c
 #endif
 
 #ifdef NANOFIX_HAS_AVX2
-NANOFIX_TARGET_AVX2
-inline std::uint8_t checksum_bytes_avx2(char const* begin, char const* end) noexcept {
+NANOFIX_ALWAYS_INLINE std::uint8_t checksum_bytes_avx2(char const* begin, char const* end) noexcept {
     __m256i a0 = _mm256_setzero_si256(), a1 = _mm256_setzero_si256();
     __m256i a2 = _mm256_setzero_si256(), a3 = _mm256_setzero_si256();
     while (end - begin >= 128) {

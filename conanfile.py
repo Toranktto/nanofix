@@ -120,3 +120,7 @@ class NanofixConan(ConanFile):
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.bindirs = ["bin"]
         self.cpp_info.libdirs = []
+        # x86-64 baseline is AVX2; the headers #error without __AVX2__.
+        if self.settings.arch == "x86_64":
+            flag = "/arch:AVX2" if self.settings.compiler == "msvc" else "-mavx2"
+            self.cpp_info.cxxflags.append(flag)

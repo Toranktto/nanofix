@@ -138,15 +138,21 @@ vector path at the iterator-increment scan regressed `BM_ReadMessageScan`
 `scan_tag_digits`), not here. Bulk whole-message framing vectorizes
 through `find_all_soh`.
 
-AVX2 functions carry `NANOFIX_TARGET_AVX2` — expands to
-`__attribute__((target("avx2")))` on GCC/Clang (lets them emit AVX2
-without global `-mavx2`), empty on MSVC (MSVC always emits the
-requested intrinsic verbatim). The 256-bit AVX2 paths are
-`checksum_bytes_avx2` and `find_tag_in_index_avx2`.
+AVX2 is a hard baseline, enforced globally, not per function: on x86-64
+`config.hpp` `#error`s unless `__AVX2__` is defined (or
+`NANOFIX_DISABLE_SIMD=1`), and the build propagates `-mavx2` /
+`/arch:AVX2` itself — the `nanofix` CMake target (build interface),
+`nanofix-config.cmake.in` (installed consumers, applied at their
+configure), Conan `package_info()` (`cxxflags`), and `fuzz/CMakeLists.txt`
+each add it for x86-64. There is no per-function
+`__attribute__((target("avx2")))`: with the flag global, the `*_avx2`
+impls are `NANOFIX_ALWAYS_INLINE` like every other variant (a `target`
+attribute would forbid inlining into non-`target` callers). The 256-bit
+AVX2 paths are `checksum_bytes_avx2` and `find_tag_in_index_avx2`.
 
-When adding a SIMD path: define `*_scalar`, `*_neon`, `*_avx2` (latter
-prefixed with `NANOFIX_TARGET_AVX2`), dispatch from a single
-`NANOFIX_ALWAYS_INLINE` wrapper via `#if/#elif/#else`, always provide
+When adding a SIMD path: define `*_scalar`, `*_neon`, `*_avx2`, all
+`NANOFIX_ALWAYS_INLINE`, dispatch from a single `NANOFIX_ALWAYS_INLINE`
+wrapper via `#if/#elif/#else`, always provide
 scalar fallback. `NANOFIX_DISABLE_SIMD=1` collapses everything to scalar
 — keep that path compiling on every change.
 

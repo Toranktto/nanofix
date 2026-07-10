@@ -3,4 +3,17 @@
 include("${CMAKE_CURRENT_LIST_DIR}/nanofix-targets.cmake")
 include("@PACKAGE_NANOFIX_GENERATE_MODULE@")
 
+# x86-64 baseline is AVX2; the headers #error without __AVX2__. Applied here,
+# at consumer configure time, so the flag matches the consuming compiler.
+# Set NANOFIX_DISABLE_SIMD before find_package for the scalar-only build.
+if(NOT NANOFIX_DISABLE_SIMD AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    if(MSVC)
+        set_property(TARGET nanofix::nanofix APPEND PROPERTY
+            INTERFACE_COMPILE_OPTIONS /arch:AVX2)
+    else()
+        set_property(TARGET nanofix::nanofix APPEND PROPERTY
+            INTERFACE_COMPILE_OPTIONS -mavx2)
+    endif()
+endif()
+
 check_required_components(nanofix)

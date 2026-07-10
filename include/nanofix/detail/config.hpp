@@ -5,14 +5,12 @@
 #define NANOFIX_HAS_NEON 1
 #endif
 #if defined(__x86_64__) || defined(_M_X64)
+#if !defined(__AVX2__)
+#error \
+    "nanofix requires AVX2 on x86-64 (Haswell+, 2013). Compile with -mavx2 / -march=haswell (MSVC: /arch:AVX2) -- the nanofix CMake/Conan targets add it -- or define NANOFIX_DISABLE_SIMD=1 for scalar-only."
+#endif
 #define NANOFIX_HAS_AVX2 1
 #endif
-#endif
-
-#if defined(__GNUC__) || defined(__clang__)
-#define NANOFIX_TARGET_AVX2 __attribute__((target("avx2")))
-#else
-#define NANOFIX_TARGET_AVX2
 #endif
 
 #ifdef NANOFIX_HAS_NEON
