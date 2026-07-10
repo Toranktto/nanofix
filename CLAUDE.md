@@ -557,13 +557,19 @@ cmake -S fuzz -B build/fuzz \
 cmake --build build/fuzz --target fuzz
 ```
 
-`NANOFIX_FUZZ_MAX_TIME=<sec>` overrides the default 60s budget. The
+`-DNANOFIX_FUZZ_MAX_TIME=<sec>` (a CMake var, set at configure) overrides
+the default 60s budget baked into the `fuzz` target. The
 `fuzz` target depends on `fuzz_dataset`, which copies `tests/data/*`
 into `build/fuzz/dataset/` at build time. libFuzzer mutates seeds and
 persists new coverage-relevant inputs into the same directory; the
 build tree is gitignored so nothing leaks into the repo. Crashes are
 written next to the working directory; replay with
 `build/fuzz/fuzz_reader ./crash-<hash>`.
+
+For a long campaign, `scripts/gcloud_fuzz.py --project <p> [--time 3600]`
+runs fuzz_reader on a fresh GCE VM with one job per vCPU, prints per-job
+coverage/stats to stdout, fetches any artifacts to `./fuzz-artifacts/`
+(exit non-zero when there are any), and deletes the VM.
 
 `fuzz/fix.dict` is a libFuzzer dictionary of FIX-shaped tokens (SOH,
 header/trailer tag prefixes, BeginString variants, MsgType, data-length
