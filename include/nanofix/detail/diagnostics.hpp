@@ -1,7 +1,6 @@
 #pragma once
 
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <nanofix/detail/config.hpp>
@@ -53,29 +52,4 @@ inline void reset_assert_failure_count() noexcept {
 inline void set_assert_handler(detail::assert_handler_t handler) noexcept {
     detail::assert_handler_slot().store(handler, std::memory_order_release);
 }
-
-/**
- * \brief Caller-owned backing store for `build_field_index`; `N` is the field
- * capacity.
- *
- * \warning All-or-nothing. More than `N` fields yields `truncated() == true`
- * and an empty index, not a partial one — fall back to the iterator for that
- * message. Never grows. Size `N` for the largest message a venue sends;
- * undersizing it is a tail-latency cliff (full iterator re-parse), not a bug.
- */
-#if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable : 4324)  // tail padding from alignas is intentional (SIMD)
-#endif
-template <std::size_t N>
-struct field_index_buffer {
-    static_assert(N > 0 && N <= 16384, "field_index_buffer<N>: N must be in (0, 16384]");
-
-    alignas(32) int tags[N];
-    alignas(32) std::uint64_t pos_len[N];  // (pos << 32) | len
-    static constexpr std::size_t capacity = N;
-};
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#endif
 }  // namespace nanofix
