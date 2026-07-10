@@ -114,6 +114,8 @@ void print_message(nanofix::message_reader const& r) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    std::printf("nanofix %s\n", NANOFIX_VERSION);
+
     std::vector<char> wire(8192);
     std::size_t off = 0;
 

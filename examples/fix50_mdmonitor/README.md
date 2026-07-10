@@ -5,13 +5,16 @@ A FIX 5.0 market-data monitor. It writes a few `MarketDataSnapshotFullRefresh`
 then reads them back and prints each `NoMDEntries` entry. Self-contained, no
 sample file.
 
-It demonstrates the **per-MsgType repeating group**. Both messages carry a
-`NoMDEntries` group, but its delimiter differs: snapshot entries start at
-`MDEntryType` (269), incremental entries at `MDUpdateAction` (279). The monitor
-feeds the matching `(count, delim)` pair to the runtime `group(count, delim)`
-overload, then pulls each entry's fields with the per-entry `find_with_hint`.
-`MDEntryType` / `MDUpdateAction` are decoded with `nanofix::value_name` from the
-opt-in `nanofix/names.hpp`.
+It demonstrates the **per-MsgType repeating group** and **both per-entry
+access tiers**. Both messages carry a `NoMDEntries` group, but its delimiter
+differs: snapshot entries start at `MDEntryType` (269), incremental entries at
+`MDUpdateAction` (279). The monitor feeds the matching `(count, delim)` pair to
+the runtime `group(count, delim)` overload. Snapshot entries (three fields)
+are read with the entry's forward-scan `find(tag::X)`; incremental entries
+(five fields) are read tiered — `build_field_index(entry, buf)` +
+`indexed_fields` when the entry fits the caller-owned buffer, falling back to
+the forward scan on `truncated()`. `MDEntryType` / `MDUpdateAction` are decoded
+with `nanofix::value_name` from the opt-in `nanofix/names.hpp`.
 
 ## Layout
 
@@ -43,6 +46,7 @@ cmake --build build/build/Release -j
 Output:
 
 ```
+nanofix <git-derived version>
 SNAPSHOT KO
     BID    px=60.12      size=500
     OFFER  px=60.15      size=300

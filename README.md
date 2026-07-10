@@ -195,7 +195,7 @@ build each on its own; exercised in CI):
 | App | Spec | Shows |
 | --- | --- | --- |
 | [fix44_gateway](examples/fix44_gateway/) | QuickFIX `FIX44.xml` | `message_writer`, `for_each_message`, `with_fields` (index↔iterator), custom-spec codegen via `nanofix_generate()` |
-| [fix50_mdmonitor](examples/fix50_mdmonitor/) | bundled FIX 5.0 SP2 + FIXT 1.1 | per-MsgType `NoMDEntries` repeating-group read on market-data snapshot/incremental (delimiter differs per MsgType), per-entry typed `find(tag::X)`, enum decode via `nanofix/names.hpp` |
+| [fix50_mdmonitor](examples/fix50_mdmonitor/) | bundled FIX 5.0 SP2 + FIXT 1.1 | per-MsgType `NoMDEntries` repeating-group read on market-data snapshot/incremental (delimiter differs per MsgType), per-entry typed `find(tag::X)`, tiered per-entry index (`build_field_index(entry, …)` with forward-scan fallback), enum decode via `nanofix/names.hpp` |
 
 ## Benchmarks
 
