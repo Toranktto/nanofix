@@ -19,19 +19,19 @@ jobs:
           cmake -S . -B build-version \
             -DNANOFIX_BUILD=OFF -DNANOFIX_BUILD_FIXSPEC_GEN=OFF \
             -DNANOFIX_LTO=OFF -DNANOFIX_NATIVE_ARCH=OFF
-      - name: Cross-check gen_version.py vs CMake-generated header
-        run: python3 scripts/gen_version.py --check build-version/nanofix-generated/include/nanofix/detail/version.hpp
+      - name: Cross-check version.py vs CMake-generated header
+        run: python3 scripts/version.py --check build-version/nanofix-generated/include/nanofix/detail/version.hpp
       - name: Cross-check CMake project version
         run: |
           cmake_base=$(grep -m1 '^CMAKE_PROJECT_VERSION:' build-version/CMakeCache.txt | cut -d= -f2)
-          script_full=$(python3 scripts/gen_version.py --print)
+          script_full=$(python3 scripts/version.py --print)
           echo "cmake=${cmake_base} script=${script_full}"
           test "${script_full%%+*}" = "${cmake_base}"
       - name: Cross-check Conan set_version
         run: |
           pip install 'conan==2.30.0'
           conan_v=$(conan inspect . --format=json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
-          script_v=$(python3 scripts/gen_version.py --print)
+          script_v=$(python3 scripts/version.py --print)
           echo "conan=${conan_v} script=${script_v}"
           test "${conan_v}" = "${script_v}"
 

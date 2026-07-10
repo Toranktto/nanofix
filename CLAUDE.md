@@ -460,12 +460,12 @@ real version into the stub.
 Two implementations of the derivation, one header template:
 `cmake/nanofix-version.cmake` (runs before `project()`; also included by the
 standalone `fuzz/` project; pure CMake because configure must work with no
-shell or Python installed) and `scripts/gen_version.py` (`git_version()` +
+shell or Python installed) and `scripts/version.py` (`git_version()` +
 `render_header()`; doubles as the CLI — `--print` / `--check <header>` /
 `<output>` write; never touches the stub). CI's `version` job cross-checks
 the two. Both render `cmake/version.hpp.in` — the only place the header text
 lives. `conanfile.py` has no derivation of its own: it loads
-`scripts/gen_version.py` (exported next to the recipe via `exports`) for
+`scripts/version.py` (exported next to the recipe via `exports`) for
 `set_version()`, passes the resolved version into the cache build as
 `-DNANOFIX_VERSION_OVERRIDE` (the Conan source copy has no `.git`), and its
 `export_sources()` stamps the rendered header over the stub in the exported

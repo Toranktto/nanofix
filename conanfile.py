@@ -6,19 +6,19 @@ from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.files import copy, save
 
 
-def _load_gen_version():
-    # Version derivation and header rendering live in scripts/gen_version.py
+def _load_version_module():
+    # Version derivation and header rendering live in scripts/version.py
     # (exported alongside the recipe); load under a unique module name so it
     # cannot clash with other recipes in the same Conan process.
     path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "scripts", "gen_version.py")
-    spec = importlib.util.spec_from_file_location("nanofix_gen_version", path)
+        os.path.dirname(os.path.abspath(__file__)), "scripts", "version.py")
+    spec = importlib.util.spec_from_file_location("nanofix_version", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-_gen_version = _load_gen_version()
+_version_module = _load_version_module()
 
 
 class NanofixConan(ConanFile):
@@ -42,7 +42,7 @@ class NanofixConan(ConanFile):
         "with_docs": False,
     }
 
-    exports = ("scripts/gen_version.py",)
+    exports = ("scripts/version.py",)
     exports_sources = (
         "CMakeLists.txt",
         "cmake/*",
@@ -55,7 +55,7 @@ class NanofixConan(ConanFile):
     )
 
     def set_version(self):
-        self.version = self.version or _gen_version.git_version(self.recipe_folder)
+        self.version = self.version or _version_module.git_version(self.recipe_folder)
 
     def export_sources(self):
         save(
@@ -64,7 +64,7 @@ class NanofixConan(ConanFile):
                 self.export_sources_folder,
                 "include", "nanofix", "detail", "version.hpp",
             ),
-            _gen_version.render_header(
+            _version_module.render_header(
                 str(self.version),
                 os.path.join(self.recipe_folder, "cmake", "version.hpp.in"),
             ),

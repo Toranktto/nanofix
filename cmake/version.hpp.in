@@ -1,4 +1,4 @@
-// Generated from git describe (v* tags) — do not edit; see scripts/gen_version.py.
+// Generated from git describe (v* tags) — do not edit; see scripts/version.py.
 #pragma once
 
 #define NANOFIX_VERSION_MAJOR @NANOFIX_VERSION_MAJOR@
