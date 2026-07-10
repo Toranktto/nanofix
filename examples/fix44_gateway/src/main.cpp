@@ -143,9 +143,21 @@ int main(int argc, char** argv) {
     }
 
     int frames = 0;
+    int checksum_rejects = 0;
     char const* tail = nanofix::for_each_message(
         wire.data(), wire.data() + off,
         [&](nanofix::message_reader const& r) {
+            // Ingress checksum gate. Framing validation (is_valid(), already
+            // done by for_each_message) never sums the bytes — and does not
+            // check that the CheckSum field is digits, hence try_as_int.
+            // Whether to pay this whole-message scan is a per-session policy;
+            // over TCP many deployments skip it.
+            unsigned char wire_cs = 0;
+            if (!r.check_sum()->value().try_as_int(wire_cs) ||
+                wire_cs != r.calculate_check_sum()) {
+                ++checksum_rejects;
+                return;
+            }
             if (frames > 0)
                 std::putchar('\n');
             print_message(r);
@@ -153,7 +165,8 @@ int main(int argc, char** argv) {
         });
 
     auto leftover = static_cast<std::size_t>(wire.data() + off - tail);
-    std::printf("\nparsed %d frame(s), %zu byte(s) of unread tail\n",
-                frames, leftover);
+    std::printf("\nparsed %d frame(s), %d checksum reject(s), "
+                "%zu byte(s) of unread tail\n",
+                frames, checksum_rejects, leftover);
     return EXIT_SUCCESS;
 }

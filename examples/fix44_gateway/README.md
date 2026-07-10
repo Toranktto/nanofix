@@ -7,8 +7,10 @@ directory is self-contained — it does NOT participate in the parent
 `nanofix` CMake build; treat it as an external downstream consumer.
 
 Writes two `NewOrderSingle` and one `ExecutionReport` into a fixed
-buffer, parses the buffer back with `for_each_message`, and pulls
-business fields out via `with_fields` (index-or-iterator, decided once).
+buffer, parses the buffer back with `for_each_message` behind an ingress
+checksum gate (`calculate_check_sum()` vs the wire CheckSum — framing
+validation alone never sums the bytes), and pulls business fields out via
+`with_fields` (index-or-iterator, decided once).
 `CMakeLists.txt` calls `nanofix_generate()` against the spec, so the generated
 `nanofix/detail/fields.hpp` and `names.hpp` for this binary are FIX 4.4, not the FIX
 5.0 SP2 set that ships with nanofix.

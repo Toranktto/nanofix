@@ -336,7 +336,8 @@ Deployment notes, roughly in priority order:
   loudly before they ship.
 - **Decide a checksum policy.** `is_valid()` validates framing structure, not
   the CheckSum value. If the transport or compliance requires it, verify at
-  ingress with `calculate_check_sum()`.
+  ingress with `calculate_check_sum()` — `examples/fix44_gateway` shows the
+  gate.
 - **Default to `try_as_*` off the wire.** The `*_unchecked` readers are for
   externally validated fields; on garbage their output is undefined
   (documented per method). Time accessors validate structure and length, not
