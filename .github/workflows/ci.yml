@@ -147,7 +147,14 @@ jobs:
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          if not defined INCLUDE exit /b 1
+          echo PATH=%PATH%>> "%GITHUB_ENV%"
+          echo INCLUDE=%INCLUDE%>> "%GITHUB_ENV%"
+          echo LIB=%LIB%>> "%GITHUB_ENV%"
+          echo LIBPATH=%LIBPATH%>> "%GITHUB_ENV%"
 
       # Conan's msvc compiler.version, derived from the installed toolset
       # (cl 19.51 -> 195). Hardcoding it breaks every time the runner image
