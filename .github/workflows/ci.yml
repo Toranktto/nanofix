@@ -8,10 +8,10 @@ on:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: version consistency
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
         with:
           fetch-depth: 0
       - name: Configure (CMake generates version.hpp)
@@ -29,38 +29,38 @@ jobs:
           test "${script_full%%+*}" = "${cmake_base}"
       - name: Cross-check Conan set_version
         run: |
-          pip install 'conan>=2.0,<3.0'
+          pip install 'conan==2.30.0'
           conan_v=$(conan inspect . --format=json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
           script_v=$(python3 scripts/gen_version.py --print)
           echo "conan=${conan_v} script=${script_v}"
           test "${conan_v}" = "${script_v}"
 
   format:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: clang-format check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
       - name: Install clang-format (pinned)
-        run: pip install 'clang-format>=20,<21'
+        run: pip install 'clang-format==20.1.8'
       - name: Run format-check.sh
         run: scripts/format-check.sh
 
   clang-tidy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: clang-tidy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
       - name: Install clang-tidy (pinned), Conan, Ninja, clang
         run: |
-          pip install 'clang-tidy==20.1.0' 'conan>=2.0,<3.0'
+          pip install 'clang-tidy==20.1.0' 'conan==2.30.0'
           sudo apt-get update
           sudo apt-get install -y ninja-build clang
       - name: Detect Conan profile
@@ -87,27 +87,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             compiler: gcc
             cc: gcc
             cxx: g++
             conan_extra: ""
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             compiler: clang
             cc: clang
             cxx: clang++
             conan_extra: ""
-          - os: macos-latest
+          - os: macos-15
             compiler: apple-clang
             cc: clang
             cxx: clang++
             conan_extra: ""
-          - os: windows-latest
+          - os: windows-2025
             compiler: msvc
             cc: cl
             cxx: cl
             conan_extra: ""
-          - os: windows-latest
+          - os: windows-2025
             compiler: clang-cl
             cc: clang-cl
             cxx: clang-cl
@@ -122,17 +122,17 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
 
       - name: Install Conan
         run: |
           python -m pip install --upgrade pip
-          pip install 'conan>=2.0,<3.0'
+          pip install 'conan==2.30.0'
           conan --version
 
       - name: Install Ninja (Linux)
@@ -161,7 +161,7 @@ jobs:
           echo "MSVC_VER=$ver" >> "$GITHUB_ENV"
 
       - name: Cache Conan packages
-        uses: actions/cache@v4
+        uses: actions/cache@v4.3.0
         with:
           path: ~/.conan2
           key: conan2-${{ matrix.os }}-${{ matrix.compiler }}-${{ hashFiles('conanfile.py') }}
@@ -199,28 +199,28 @@ jobs:
         sanitizer:
           - { name: asan, flag: NANOFIX_SANITIZE,        opts: "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1" }
           - { name: tsan, flag: NANOFIX_SANITIZE_THREAD, opts: "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1" }
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ubuntu / clang / ${{ matrix.sanitizer.name }}
     env:
       CC: clang
       CXX: clang++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
 
       - name: Install Conan + tools
         run: |
           python -m pip install --upgrade pip
-          pip install 'conan>=2.0,<3.0'
+          pip install 'conan==2.30.0'
           sudo apt-get update
           sudo apt-get install -y ninja-build clang
 
       - name: Cache Conan packages
-        uses: actions/cache@v4
+        uses: actions/cache@v4.3.0
         with:
           path: ~/.conan2
           key: conan2-${{ matrix.sanitizer.name }}-${{ hashFiles('conanfile.py') }}
@@ -257,10 +257,10 @@ jobs:
           ctest --test-dir build-${{ matrix.sanitizer.name }}/build/Debug --output-on-failure --parallel 4
 
   fuzz:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ubuntu / clang / libFuzzer (60s)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
       - name: Install tools
         run: |
           sudo apt-get update
@@ -287,7 +287,7 @@ jobs:
             fuzz-corpus build/fuzz/dataset
       - name: Upload crashes (if any)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: fuzz-crashes
           path: |
@@ -297,28 +297,28 @@ jobs:
           if-no-files-found: ignore
 
   examples:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ubuntu / clang / examples (standalone Conan)
     env:
       CC: clang
       CXX: clang++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
 
       - name: Install Conan + tools
         run: |
           python -m pip install --upgrade pip
-          pip install 'conan>=2.0,<3.0'
+          pip install 'conan==2.30.0'
           sudo apt-get update
           sudo apt-get install -y ninja-build clang
 
       - name: Cache Conan packages
-        uses: actions/cache@v4
+        uses: actions/cache@v4.3.0
         with:
           path: ~/.conan2
           key: conan2-examples-${{ hashFiles('conanfile.py') }}
@@ -367,12 +367,12 @@ jobs:
           ./build/build/Release/fix50_mdmonitor
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ubuntu / doxygen build
     env:
       DOXYGEN_VERSION: "1.17.0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
       - name: Install graphviz
         run: |
           sudo apt-get update
