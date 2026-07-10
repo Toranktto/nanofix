@@ -368,9 +368,10 @@ What it does:
    `BM_Parse_FindN_{Iter,Indexed}`. Write throughput is derived in
    `render.py` as `1e9 / cpu_time` from the single-message `BM_WriteNewOrder`.
    It is deliberately NOT the full per-path dump — detailed analysis comes from
-   the raw `benchmarks/` GB output. `run.sh` also writes the rendered tables to
-   an arch-named committed snapshot next to itself (`ARM64.md` / `X64.md`, by
-   `uname -m`), linked from the README's "Indicative numbers" section.
+   the raw `benchmarks/` GB output. Tables go to stdout, progress to stderr;
+   the committed snapshots at the repo root (`ARM64.md` / `X86_64.md`, linked
+   from the README's "Indicative numbers" section) are captured by
+   redirecting: `compare2upstream/run.sh > ARM64.md`.
 
 Override URL / ref / timing via env: `NANOFIX_UPSTREAM_URL`,
 `NANOFIX_UPSTREAM_REF`, `NANOFIX_BENCH_MIN_TIME`,

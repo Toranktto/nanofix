@@ -30,12 +30,13 @@ if ! find "${CONAN_DIR}" -name conan_toolchain.cmake -print -quit 2> /dev/null |
         echo "error: '${CONAN_BIN}' not in PATH; install Conan 2, set CONAN=<path>, or set COMPARE2UPSTREAM_DIR to a tree that already contains a conan-base toolchain" >&2
         exit 1
     fi
-    echo ">> running conan install -> ${CONAN_DIR}"
+    echo ">> running conan install -> ${CONAN_DIR}" >&2
     "${CONAN_BIN}" install "${ROOT}" \
         --output-folder "${CONAN_DIR}" \
         --build=missing \
         --settings=build_type=Release > /dev/null
 fi
+
 # conan's cmake_layout nests the toolchain under build/<cfg>/generators; resolve
 # wherever it landed instead of assuming a flat conan-base/conan_toolchain.cmake.
 CONAN_TC=$(find "${CONAN_DIR}" -name conan_toolchain.cmake -print -quit 2> /dev/null)
@@ -45,7 +46,7 @@ CONAN_TC=$(find "${CONAN_DIR}" -name conan_toolchain.cmake -print -quit 2> /dev/
 }
 
 if [[ ! -d ${UPSTREAM_SRC}/.git ]]; then
-    echo ">> cloning ${UPSTREAM_URL} -> ${UPSTREAM_SRC}"
+    echo ">> cloning ${UPSTREAM_URL} -> ${UPSTREAM_SRC}" >&2
     rm -rf "${UPSTREAM_SRC}"
     if [[ -n ${UPSTREAM_REF} ]]; then
         git clone --depth 1 --branch "${UPSTREAM_REF}" "${UPSTREAM_URL}" "${UPSTREAM_SRC}"
@@ -80,14 +81,11 @@ ensure_configured() {
 }
 
 if ! ls "${DATA_DIR}"/*.fix > /dev/null 2>&1; then
-    echo ">> generating dataset (.fix)"
+    echo ">> generating dataset (.fix)" >&2
     ensure_configured "${BUILD}/fork" "${ROOT}" ""
     cmake --build "${BUILD}/fork" --target bench_data
 fi
 
-# Only the benches the overview tables consume — keep the differential run
-# fast and focused. Anchored alternation; benches absent from a config
-# (upstream has no indexed path, no FindN) are simply not matched there.
 BENCH_FILTER='^(BM_WriteNewOrder|BM_Write_TailLatency|BM_Parse_(Sequential|Random)_(Iter|Indexed)|BM_Parse_TailLatency_(Sequential|Random)_(Iter|Indexed)|BM_Parse_FindN_(Iter|Indexed))(/.*)?$'
 
 BENCH_ARGS=(
@@ -99,17 +97,11 @@ BENCH_ARGS=(
     --benchmark_format=json
 )
 
-# Core-pinning prefix. Google Benchmark does not pin the measured workload
-# (its only affinity touch is a transient CPU-frequency metadata probe). On a
-# non-pinned host, scheduler migration + frequency scaling swamp small deltas.
-# Set NANOFIX_BENCH_CPU=<n> on Linux to pin every config to one isolated core
-# (same core across configs keeps the comparison apples-to-apples). macOS has
-# no hard pinning, so the prefix stays empty there.
 PIN=()
 if [[ -n ${NANOFIX_BENCH_CPU:-} ]]; then
     if [[ $(uname -s) == Linux ]] && command -v taskset > /dev/null; then
         PIN=(taskset -c "${NANOFIX_BENCH_CPU}")
-        echo ">> pinning benchmarks to cpu ${NANOFIX_BENCH_CPU} (taskset)"
+        echo ">> pinning benchmarks to cpu ${NANOFIX_BENCH_CPU} (taskset)" >&2
     else
         echo ">> NANOFIX_BENCH_CPU set but taskset/Linux unavailable; running unpinned" >&2
     fi
@@ -122,21 +114,12 @@ for cfg in "${CONFIGS[@]}"; do
     target="${exec_relpath##*/}"
     json="${RESULTS_DIR}/${label}.json"
 
-    echo ">> ${label}"
+    echo ">> ${label}" >&2
     ensure_configured "${build_dir}" "${source_dir}" "${extra}"
     cmake --build "${build_dir}" --target "${target}" > /dev/null
     ${PIN[@]+"${PIN[@]}"} "${build_dir}/${exec_relpath}${EXE_SUFFIX}" "${BENCH_ARGS[@]}" > "${json}"
     RENDER_ARGS+=("${label}=${json}")
 done
-
-# Rendered tables also land in an arch-named markdown file at the repo root
-# (committed, linked from the README "Indicative numbers" section):
-# ARM64.md / X86_64.md.
-case "$(uname -m)" in
-    arm64 | aarch64) ARCH_MD=ARM64.md ;;
-    x86_64 | amd64) ARCH_MD=X86_64.md ;;
-    *) ARCH_MD="$(uname -m).md" ;;
-esac
 
 PINNED_NOTE="unpinned"
 [[ ${#PIN[@]} -gt 0 ]] && PINNED_NOTE="pinned to cpu ${NANOFIX_BENCH_CPU}"
@@ -150,10 +133,7 @@ HEADER="# Benchmark overview — $(uname -m)
 > authoritative A/B comes from a pinned, isolated Linux core
 > (\`NANOFIX_BENCH_CPU=<cpu>\`, governor \`performance\`, \`isolcpus\`)."
 
-echo
-echo "================================================================"
-echo "min_time=${MIN_TIME}  repetitions=${REPS}  ->  ${ROOT}/${ARCH_MD}"
-echo "================================================================"
-echo
+# Tables go to stdout; everything else this script prints is on stderr, so
+# the committed snapshot is `compare2upstream/run.sh > ARM64.md`.
 "${PYTHON_BIN}" "${BASE}/render.py" "${RENDER_ARGS[@]}" \
-    --header "${HEADER}" --out "${ROOT}/${ARCH_MD}"
+    --header "${HEADER}"
