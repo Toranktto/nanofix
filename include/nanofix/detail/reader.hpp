@@ -154,7 +154,7 @@ public:
      * \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
      */
     [[nodiscard]] unsigned char calculate_check_sum() const noexcept {
-        NANOFIX_ASSERT(is_valid_, "nanofix Cannot calculate checksum for an invalid message.");
+        NANOFIX_ASSERT(is_valid_, "Cannot calculate checksum for an invalid message.");
         return detail::checksum_bytes(buffer_, end_.buffer_);
     }
 
@@ -163,28 +163,28 @@ public:
     /// Iterator at MsgType; synonym `message_type()`.
     /// \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     NANOFIX_ALWAYS_INLINE const_iterator begin() const {
-        NANOFIX_ASSERT(is_valid_, "nanofix Cannot return iterator for an invalid message.");
+        NANOFIX_ASSERT(is_valid_, "Cannot return iterator for an invalid message.");
         return begin_;
     }
 
     /// Iterator at CheckSum; synonym `check_sum()`.
     /// \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     NANOFIX_ALWAYS_INLINE const_iterator end() const {
-        NANOFIX_ASSERT(is_valid_, "nanofix Cannot return iterator for an invalid message.");
+        NANOFIX_ASSERT(is_valid_, "Cannot return iterator for an invalid message.");
         return end_;
     }
 
     /// Synonym for `begin()`.
     /// \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     const_iterator message_type() const {
-        NANOFIX_ASSERT(is_valid_, "nanofix Cannot return iterator for an invalid message.");
+        NANOFIX_ASSERT(is_valid_, "Cannot return iterator for an invalid message.");
         return begin_;
     }
 
     /// Synonym for `end()`.
     /// \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     const_iterator check_sum() const {
-        NANOFIX_ASSERT(is_valid_, "nanofix Cannot return iterator for an invalid message.");
+        NANOFIX_ASSERT(is_valid_, "Cannot return iterator for an invalid message.");
         return end_;
     }
 
@@ -192,7 +192,7 @@ public:
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     char const* prefix_begin() const noexcept {
         NANOFIX_ASSERT(is_complete_ && is_valid_,
-                       "nanofix Cannot read BeginString prefix on incomplete or invalid message.");
+                       "Cannot read BeginString prefix on incomplete or invalid message.");
         return buffer_ + 2;
     }
 
@@ -200,7 +200,7 @@ public:
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     char const* prefix_end() const noexcept {
         NANOFIX_ASSERT(is_complete_ && is_valid_,
-                       "nanofix Cannot read BeginString prefix on incomplete or invalid message.");
+                       "Cannot read BeginString prefix on incomplete or invalid message.");
         return prefix_end_;
     }
 
@@ -208,7 +208,7 @@ public:
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     size_t prefix_size() const noexcept {
         NANOFIX_ASSERT(is_complete_ && is_valid_,
-                       "nanofix Cannot read BeginString prefix on incomplete or invalid message.");
+                       "Cannot read BeginString prefix on incomplete or invalid message.");
         return static_cast<size_t>(prefix_end_ - buffer_ - 2);
     }
 
@@ -281,13 +281,13 @@ public:
 
     /// Past-the-end of the message. \pre `is_valid()`; fires `NANOFIX_ASSERT` otherwise.
     char const* message_end() const {
-        NANOFIX_ASSERT(is_valid_, "nanofix Cannot determine size of an invalid message.");
+        NANOFIX_ASSERT(is_valid_, "Cannot determine size of an invalid message.");
         return end_.current_.value_.end_ + 1;
     }
 
     /// Message size in bytes. \pre `is_valid()`; fires `NANOFIX_ASSERT` otherwise.
     size_t message_size() const {
-        NANOFIX_ASSERT(is_valid_, "nanofix Cannot determine size of an invalid message.");
+        NANOFIX_ASSERT(is_valid_, "Cannot determine size of an invalid message.");
         return end_.current_.value_.end_ - buffer_ + 1;
     }
 
