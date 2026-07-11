@@ -23,6 +23,44 @@ NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_scalar(char const* begin,
     return n;
 }
 
+#ifdef NANOFIX_HAS_AVX2
+NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_avx2(char const* begin,
+                                                    char const* end,
+                                                    std::uint32_t* NANOFIX_RESTRICT out,
+                                                    std::size_t cap) noexcept {
+    char const* const base = begin;
+    std::size_t n = 0;
+    __m256i const soh = _mm256_set1_epi8(0x01);
+    while (end - begin >= 64 && n + 64 <= cap) {
+        __m256i const v0 = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(begin));
+        __m256i const v1 = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(begin + 32));
+        auto const m0 = static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v0, soh)));
+        auto const m1 = static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v1, soh)));
+        std::uint64_t mask = m0 | (static_cast<std::uint64_t>(m1) << 32);
+        auto const offbase = static_cast<std::uint32_t>(begin - base);
+        while (mask) {
+            out[n++] = offbase + static_cast<std::uint32_t>(std::countr_zero(mask));
+            mask &= mask - 1;
+        }
+        begin += 64;
+    }
+    while (end - begin >= 32 && n + 32 <= cap) {
+        __m256i const v = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(begin));
+        auto mask = static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, soh)));
+        auto const offbase = static_cast<std::uint32_t>(begin - base);
+        while (mask) {
+            out[n++] = offbase + static_cast<std::uint32_t>(std::countr_zero(mask));
+            mask &= mask - 1;
+        }
+        begin += 32;
+    }
+    for (; begin < end && n < cap; ++begin)
+        if (*begin == '\x01')
+            out[n++] = static_cast<std::uint32_t>(begin - base);
+    return n;
+}
+#endif
+
 #ifdef NANOFIX_HAS_NEON
 NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_neon(char const* begin,
                                                     char const* end,
@@ -52,39 +90,14 @@ NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_neon(char const* begin,
 }
 #endif
 
-#ifdef NANOFIX_HAS_AVX2
-NANOFIX_ALWAYS_INLINE std::size_t find_all_soh_avx2(char const* begin,
-                                                    char const* end,
-                                                    std::uint32_t* NANOFIX_RESTRICT out,
-                                                    std::size_t cap) noexcept {
-    char const* const base = begin;
-    std::size_t n = 0;
-    __m256i const soh = _mm256_set1_epi8(0x01);
-    while (end - begin >= 32 && n + 32 <= cap) {
-        __m256i const v = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(begin));
-        auto mask = static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, soh)));
-        auto const offbase = static_cast<std::uint32_t>(begin - base);
-        while (mask) {
-            out[n++] = offbase + static_cast<std::uint32_t>(std::countr_zero(mask));
-            mask &= mask - 1;
-        }
-        begin += 32;
-    }
-    for (; begin < end && n < cap; ++begin)
-        if (*begin == '\x01')
-            out[n++] = static_cast<std::uint32_t>(begin - base);
-    return n;
-}
-#endif
-
 NANOFIX_ALWAYS_INLINE std::size_t find_all_soh(char const* begin,
                                                char const* end,
                                                std::uint32_t* out,
                                                std::size_t cap) noexcept {
-#if defined(NANOFIX_HAS_NEON)
-    return find_all_soh_neon(begin, end, out, cap);
-#elif defined(NANOFIX_HAS_AVX2)
+#if defined(NANOFIX_HAS_AVX2)
     return find_all_soh_avx2(begin, end, out, cap);
+#elif defined(NANOFIX_HAS_NEON)
+    return find_all_soh_neon(begin, end, out, cap);
 #else
     return find_all_soh_scalar(begin, end, out, cap);
 #endif
@@ -99,6 +112,53 @@ NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_scalar(int const* tags,
     }
     return n;
 }
+
+#ifdef NANOFIX_HAS_AVX2
+NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_avx2(int const* tags,
+                                                         std::size_t n,
+                                                         int tag) noexcept {
+    std::size_t i = 0;
+    __m256i const target = _mm256_set1_epi32(tag);
+    while (i + 16 <= n) {
+        __m256i const v0 = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(tags + i));
+        __m256i const v1 = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(tags + i + 8));
+        __m256i const eq0 = _mm256_cmpeq_epi32(v0, target);
+        __m256i const eq1 = _mm256_cmpeq_epi32(v1, target);
+        if (_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_or_si256(eq0, eq1)))) [[unlikely]] {
+            std::uint32_t const m0 =
+                static_cast<std::uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(eq0)));
+            std::uint32_t const m1 =
+                static_cast<std::uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(eq1)));
+            std::uint32_t const m = m0 | (m1 << 8);
+            return i + std::countr_zero(m);
+        }
+        i += 16;
+    }
+    while (i + 8 <= n) {
+        __m256i const v = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(tags + i));
+        __m256i const eq = _mm256_cmpeq_epi32(v, target);
+        std::uint32_t const mask =
+            static_cast<std::uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(eq)));
+        if (mask) [[unlikely]]
+            return i + std::countr_zero(mask);
+        i += 8;
+    }
+    __m128i const target128 = _mm_set1_epi32(tag);
+    while (i + 4 <= n) {
+        __m128i const v = _mm_loadu_si128(reinterpret_cast<__m128i const*>(tags + i));
+        __m128i const eq = _mm_cmpeq_epi32(v, target128);
+        std::uint32_t const mask = static_cast<std::uint32_t>(_mm_movemask_ps(_mm_castsi128_ps(eq)));
+        if (mask) [[unlikely]]
+            return i + std::countr_zero(mask);
+        i += 4;
+    }
+    for (; i < n; ++i) {
+        if (tags[i] == tag)
+            return i;
+    }
+    return n;
+}
+#endif
 
 #ifdef NANOFIX_HAS_NEON
 NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_neon(int const* tags,
@@ -133,43 +193,11 @@ NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_neon(int const* tags,
 }
 #endif
 
-#ifdef NANOFIX_HAS_AVX2
-NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index_avx2(int const* tags,
-                                                         std::size_t n,
-                                                         int tag) noexcept {
-    std::size_t i = 0;
-    __m256i const target = _mm256_set1_epi32(tag);
-    while (i + 8 <= n) {
-        __m256i const v = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(tags + i));
-        __m256i const eq = _mm256_cmpeq_epi32(v, target);
-        std::uint32_t const mask =
-            static_cast<std::uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(eq)));
-        if (mask) [[unlikely]]
-            return i + std::countr_zero(mask);
-        i += 8;
-    }
-    __m128i const target128 = _mm_set1_epi32(tag);
-    while (i + 4 <= n) {
-        __m128i const v = _mm_loadu_si128(reinterpret_cast<__m128i const*>(tags + i));
-        __m128i const eq = _mm_cmpeq_epi32(v, target128);
-        std::uint32_t const mask = static_cast<std::uint32_t>(_mm_movemask_ps(_mm_castsi128_ps(eq)));
-        if (mask) [[unlikely]]
-            return i + std::countr_zero(mask);
-        i += 4;
-    }
-    for (; i < n; ++i) {
-        if (tags[i] == tag)
-            return i;
-    }
-    return n;
-}
-#endif
-
 NANOFIX_ALWAYS_INLINE std::size_t find_tag_in_index(int const* tags, std::size_t n, int tag) noexcept {
-#if defined(NANOFIX_HAS_NEON)
-    return find_tag_in_index_neon(tags, n, tag);
-#elif defined(NANOFIX_HAS_AVX2)
+#if defined(NANOFIX_HAS_AVX2)
     return find_tag_in_index_avx2(tags, n, tag);
+#elif defined(NANOFIX_HAS_NEON)
+    return find_tag_in_index_neon(tags, n, tag);
 #else
     return find_tag_in_index_scalar(tags, n, tag);
 #endif
@@ -182,36 +210,10 @@ NANOFIX_ALWAYS_INLINE std::uint8_t checksum_bytes_scalar(char const* begin, char
     return sum;
 }
 
-#ifdef NANOFIX_HAS_NEON
-NANOFIX_ALWAYS_INLINE std::uint8_t checksum_bytes_neon(char const* begin, char const* end) noexcept {
-    if (end - begin < 1024)
-        return checksum_bytes_scalar(begin, end);
-    uint8x16_t a0 = vdupq_n_u8(0), a1 = vdupq_n_u8(0);
-    uint8x16_t a2 = vdupq_n_u8(0), a3 = vdupq_n_u8(0);
-    while (end - begin >= 64) {
-        auto const* p = reinterpret_cast<std::uint8_t const*>(begin);
-        a0 = vaddq_u8(a0, vld1q_u8(p));
-        a1 = vaddq_u8(a1, vld1q_u8(p + 16));
-        a2 = vaddq_u8(a2, vld1q_u8(p + 32));
-        a3 = vaddq_u8(a3, vld1q_u8(p + 48));
-        begin += 64;
-    }
-    a0 = vaddq_u8(a0, a1);
-    a2 = vaddq_u8(a2, a3);
-    a0 = vaddq_u8(a0, a2);
-    while (end - begin >= 16) {
-        a0 = vaddq_u8(a0, vld1q_u8(reinterpret_cast<std::uint8_t const*>(begin)));
-        begin += 16;
-    }
-    std::uint8_t sum = vaddvq_u8(a0);
-    while (begin != end)
-        sum = static_cast<std::uint8_t>(sum + std::uint8_t(*begin++));
-    return sum;
-}
-#endif
-
 #ifdef NANOFIX_HAS_AVX2
 NANOFIX_ALWAYS_INLINE std::uint8_t checksum_bytes_avx2(char const* begin, char const* end) noexcept {
+    if (end - begin < 256)
+        return checksum_bytes_scalar(begin, end);
     __m256i a0 = _mm256_setzero_si256(), a1 = _mm256_setzero_si256();
     __m256i a2 = _mm256_setzero_si256(), a3 = _mm256_setzero_si256();
     while (end - begin >= 128) {
@@ -242,11 +244,39 @@ NANOFIX_ALWAYS_INLINE std::uint8_t checksum_bytes_avx2(char const* begin, char c
 }
 #endif
 
+#ifdef NANOFIX_HAS_NEON
+NANOFIX_ALWAYS_INLINE std::uint8_t checksum_bytes_neon(char const* begin, char const* end) noexcept {
+    if (end - begin < 1024)
+        return checksum_bytes_scalar(begin, end);
+    uint8x16_t a0 = vdupq_n_u8(0), a1 = vdupq_n_u8(0);
+    uint8x16_t a2 = vdupq_n_u8(0), a3 = vdupq_n_u8(0);
+    while (end - begin >= 64) {
+        auto const* p = reinterpret_cast<std::uint8_t const*>(begin);
+        a0 = vaddq_u8(a0, vld1q_u8(p));
+        a1 = vaddq_u8(a1, vld1q_u8(p + 16));
+        a2 = vaddq_u8(a2, vld1q_u8(p + 32));
+        a3 = vaddq_u8(a3, vld1q_u8(p + 48));
+        begin += 64;
+    }
+    a0 = vaddq_u8(a0, a1);
+    a2 = vaddq_u8(a2, a3);
+    a0 = vaddq_u8(a0, a2);
+    while (end - begin >= 16) {
+        a0 = vaddq_u8(a0, vld1q_u8(reinterpret_cast<std::uint8_t const*>(begin)));
+        begin += 16;
+    }
+    std::uint8_t sum = vaddvq_u8(a0);
+    while (begin != end)
+        sum = static_cast<std::uint8_t>(sum + std::uint8_t(*begin++));
+    return sum;
+}
+#endif
+
 NANOFIX_ALWAYS_INLINE std::uint8_t checksum_bytes(char const* begin, char const* end) noexcept {
-#if defined(NANOFIX_HAS_NEON)
-    return checksum_bytes_neon(begin, end);
-#elif defined(NANOFIX_HAS_AVX2)
+#if defined(NANOFIX_HAS_AVX2)
     return checksum_bytes_avx2(begin, end);
+#elif defined(NANOFIX_HAS_NEON)
+    return checksum_bytes_neon(begin, end);
 #else
     return checksum_bytes_scalar(begin, end);
 #endif

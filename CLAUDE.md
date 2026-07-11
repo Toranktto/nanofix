@@ -127,7 +127,7 @@ raw `char*` pairs as the only form.
 
 `find_all_soh`, `find_tag_in_index`, `checksum_bytes` ship three impls
 (scalar / NEON / AVX2). Dispatch is a compile-time `#if/#elif/#else`
-on `NANOFIX_HAS_NEON` / `NANOFIX_HAS_AVX2`. Architecture baselines:
+on `NANOFIX_HAS_AVX2` / `NANOFIX_HAS_NEON`. Architecture baselines:
 AVX2 on x86-64 (Haswell+, 2013), NEON on aarch64 (ARMv8 mandatory).
 Consequence: x86-64 binaries require Haswell+ — use
 `NANOFIX_DISABLE_SIMD` for pre-2013 deploys. There is no vector SOH
@@ -147,10 +147,12 @@ configure), Conan `package_info()` (`cxxflags`), and `fuzz/CMakeLists.txt`
 each add it for x86-64. There is no per-function
 `__attribute__((target("avx2")))`: with the flag global, the `*_avx2`
 impls are `NANOFIX_ALWAYS_INLINE` like every other variant (a `target`
-attribute would forbid inlining into non-`target` callers). The 256-bit
-AVX2 paths are `checksum_bytes_avx2` and `find_tag_in_index_avx2`.
+attribute would forbid inlining into non-`target` callers). The vector
+checksums fall back to scalar on short input (`checksum_bytes_avx2` below
+256 B, `checksum_bytes_neon` below 1024 B) — a threshold change is a
+hot-path experiment like any other.
 
-When adding a SIMD path: define `*_scalar`, `*_neon`, `*_avx2`, all
+When adding a SIMD path: define `*_scalar`, `*_avx2`, `*_neon`, all
 `NANOFIX_ALWAYS_INLINE`, dispatch from a single `NANOFIX_ALWAYS_INLINE`
 wrapper via `#if/#elif/#else`, always provide
 scalar fallback. `NANOFIX_DISABLE_SIMD=1` collapses everything to scalar
