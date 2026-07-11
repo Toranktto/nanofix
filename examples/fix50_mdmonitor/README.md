@@ -16,15 +16,6 @@ are read with the entry's forward-scan `find(tag::X)`; incremental entries
 the forward scan on `truncated()`. `MDEntryType` / `MDUpdateAction` are decoded
 with `nanofix::value_name` from the opt-in `nanofix/names.hpp`.
 
-## Layout
-
-```
-fix50_mdmonitor/
-├── CMakeLists.txt
-├── conanfile.txt
-└── src/main.cpp
-```
-
 ## Build
 
 ```sh

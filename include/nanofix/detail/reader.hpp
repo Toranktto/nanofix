@@ -14,19 +14,6 @@
 namespace nanofix {
 
 /**
- * \brief Immutable forward view over one FIX message. Does not modify or own
- * the buffer, which must outlive the reader.
- *
- * Construction validates only the header/trailer transport fields
- * (BeginString, BodyLength, MsgType, CheckSum), not content — so it is O(1).
- * `begin()` points at MsgType, `end()` at CheckSum.
- *
- * Iteration yields content fields only; framing fields are skipped:
- * BeginString, BodyLength, CheckSum, and every binary-data length tag
- * (those `detail::is_tag_a_data_length()` recognizes). A binary-data field
- * is itself a content field; its length is its `value().size()`.
- */
-/**
  * \brief Why `message_reader` framing rejected a complete-but-malformed
  * message. Meaningful only when `is_complete() && !is_valid()`; otherwise
  * `none`. Maps to the FIX SessionRejectReason a gateway would emit.
@@ -43,6 +30,19 @@ enum class parse_error : std::uint8_t {
     msg_type_unterminated,      // MsgType value runs past the trailer
 };
 
+/**
+ * \brief Immutable forward view over one FIX message. Does not modify or own
+ * the buffer, which must outlive the reader.
+ *
+ * Construction validates only the header/trailer transport fields
+ * (BeginString, BodyLength, MsgType, CheckSum), not content — O(1) for a
+ * well-formed frame. `begin()` points at MsgType, `end()` at CheckSum.
+ *
+ * Iteration yields content fields only; framing fields are skipped:
+ * BeginString, BodyLength, CheckSum, and every binary-data length tag
+ * (those `detail::is_tag_a_data_length()` recognizes). A binary-data field
+ * is itself a content field; its length is its `value().size()`.
+ */
 class message_reader {
 public:
     typedef field value_type;
@@ -145,9 +145,11 @@ public:
 
     /**
      * \brief Compute the checksum over this message. Never computed implicitly;
-     * compare against the message's CheckSum field yourself:
+     * compare against the message's CheckSum field yourself (framing does not
+     * validate that the CheckSum bytes are digits, hence `try_as_int`):
      * \code
-     * if (r.calculate_check_sum() == r.check_sum()->value().as_int_unchecked<unsigned char>()) {}
+     * unsigned char wire = 0;
+     * if (r.check_sum()->value().try_as_int(wire) && wire == r.calculate_check_sum()) {}
      * \endcode
      * \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
      */
@@ -219,11 +221,12 @@ public:
      * \code
      * nanofix::message_reader::const_iterator i = reader.begin();
      *
-     * if (reader.find_with_hint(MsgSeqNum, i))
-     *   int seqnum = i++->as_int_unchecked<int>();
+     * int seqnum = 0;
+     * if (reader.find_with_hint(nanofix::tag::MsgSeqNum, i) && i++->value().try_as_int(seqnum))
+     *   consume(seqnum);
      *
-     * if (reader.find_with_hint(TargetCompID, i))
-     *   std::string_view targetcompid = i++->as_string_view();
+     * if (reader.find_with_hint(nanofix::tag::TargetCompID, i))
+     *   std::string_view targetcompid = i++->value().as_string_view();
      * \endcode
      */
     [[nodiscard]] NANOFIX_ALWAYS_INLINE bool find_with_hint(int tag, const_iterator& i) const {
@@ -256,8 +259,9 @@ public:
      * \brief `group_view` over a FIX repeating group introduced by `count_tag`
      * (NoXxx). `first_tag_in_group` is the per-entry delimiter; the caller
      * supplies it from the dictionary because a group's delimiter can differ by
-     * MsgType. Empty view if `count_tag` is absent or the group is empty. Call
-     * `group()` on a `group_entry` for nested groups.
+     * MsgType. Empty view if `count_tag` is absent, its value does not parse
+     * as an int, or the group is empty. Call `group()` on a `group_entry` for
+     * nested groups.
      */
     group_view group(int count_tag, int first_tag_in_group) const;
 
@@ -581,9 +585,9 @@ NANOFIX_ALWAYS_INLINE void message_reader_const_iterator::increment() {
 
     // Opaque tag accumulation, no overflow guard by design: wrap is
     // well-defined (unsigned, then C++20 modulo signed conversion), and every
-    // tag-indexed consumer (is_tag_a_data_length range-guards, slot_of /
-    // is_known_tag reject unknowns) rejects a garbage tag — never UB/OOB. A
-    // per-digit guard would cost the hot loop for no safety gain.
+    // tag-indexed consumer (is_tag_a_data_length range-guards, is_known_tag
+    // rejects unknowns) rejects a garbage tag — never UB/OOB. A per-digit
+    // guard would cost the hot loop for no safety gain.
     int tag = 0;
     p = detail::scan_tag_digits<true>(p, message_end_, tag);
     if (p >= message_end_) [[unlikely]] {

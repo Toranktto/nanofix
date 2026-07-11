@@ -183,8 +183,8 @@ Append venue XML to `fixspec-gen` input to union the bitmap.
 
 ## Validating vs unchecked parsers
 
-- `try_as_int(T&)` / `try_as_decimal(T&, T&)`: validating, no overflow
-  detection, `noexcept`, returns `bool`.
+- `try_as_int(T&)` / `try_as_decimal(T&, T&)`: validating (digits and
+  overflow), `noexcept`, returns `bool`.
 - `as_int_unchecked<T>()` / `as_decimal_unchecked<T>()`: garbage in =
   undefined output. Suffix is mandatory consent.
 - Default new code to the `try_*` variants. Use `_unchecked` only when
@@ -283,7 +283,8 @@ robustness), `tests/integration_tests.cpp` (round-trip + malformed-input
 fixtures from `tests/data/`), `tests/framing_diff_tests.cpp`
 (`BulkFramingDiffTest`: the bulk-SIMD `build_field_index` must match the
 per-field reference byte-for-byte), and `tests/threading_tests.cpp`
-(TSan-validated concurrent-reader claims from the README "Thread safety"
+(TSan-validated concurrent-reader claims from the README "Thread safety and
+errors"
 section). `tests/test_common.hpp` holds the shared fixture loader. All run as a
 single `tests` binary via GoogleTest. Run after every header change.
 

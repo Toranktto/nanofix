@@ -77,7 +77,7 @@ jobs:
             -c:h "tools.build:compiler_executables={\"c\":\"clang\",\"cpp\":\"clang++\"}"
       - name: CMake configure (export compile_commands.json)
         run: cmake --preset conan-release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-      - name: Build benchmarks (generates the layout header lint reads)
+      - name: Build benchmarks
         run: cmake --build build/build/Release --target nanofix_benchmarks --parallel
       - name: Run lint.sh
         run: scripts/lint.sh build/build/Release

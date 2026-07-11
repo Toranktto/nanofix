@@ -244,9 +244,9 @@ void BM_WriteNewOrder(benchmark::State& state) {
     int seq = 0;
     std::size_t total = 0;
     for (auto _ : state) {
-        // Re-opaque the invariants each iteration: with everything inlined the
-        // compiler can otherwise hoist the timestamp formatting and fold the
-        // constant seq, collapsing the bench into a memcpy replay.
+        // Re-opaque the loop-invariant timestamp each iteration: with
+        // everything inlined the compiler can otherwise hoist its formatting,
+        // collapsing the bench into a memcpy replay.
         benchmark::DoNotOptimize(tsend);
         std::size_t n = write_new_order(buffer, sizeof(buffer), 1000 + (seq++ & 8191), tsend);
         benchmark::DoNotOptimize(buffer);

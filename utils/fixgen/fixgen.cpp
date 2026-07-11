@@ -52,8 +52,8 @@ constexpr std::size_t kNumSymbols = sizeof(kSymbols) / sizeof(kSymbols[0]);
 char const* const kSenders[] = {"A", "B", "CME", "CLNT", "EXCH"};
 constexpr std::size_t kNumSenders = sizeof(kSenders) / sizeof(kSenders[0]);
 
-// Random nanosecond timestamp on 2024-01-15. Digits vary in every position so
-// the SWAR timestamp parser sees full coverage.
+// Random nanosecond timestamp on 2024-01-15: time-of-day and fractional
+// digits vary per message (the date part stays fixed).
 template <typename Rng>
 auto base_time(Rng& rng) noexcept {
     using namespace std::chrono;
@@ -65,7 +65,7 @@ auto base_time(Rng& rng) noexcept {
            seconds{second_dist(rng)} + nanoseconds{nano_dist(rng)};
 }
 
-// 20-char ClOrdID — venue norm (UTC compaction + counter).
+// 20-char ClOrdID — venue-typical length (counter + hash, hex-encoded).
 std::string_view make_clordid(int seq) noexcept {
     static thread_local char buf[20];
     static constexpr char hex[] = "0123456789ABCDEF";
@@ -80,7 +80,7 @@ std::string_view make_clordid(int seq) noexcept {
     return std::string_view{buf, sizeof(buf)};
 }
 
-// 8-char SecurityID — ISIN/SEDOL-shaped.
+// 8-char alphabetic SecurityID.
 std::string_view make_security_id(int seq) noexcept {
     static thread_local char buf[8];
     static constexpr char alpha[] = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -509,8 +509,9 @@ int main(int argc, char** argv) {
     std::size_t max_seen = 0;
     bool dataset_ok = true;
 
-    // Inject `corruption_interval`-message blocks of noise — exercises the
-    // next_message_reader resync path that `is_valid()` falls through to.
+    // Inject a 4-24 byte noise block every `corruption_interval` messages —
+    // exercises the next_message_reader resync path that `is_valid()` falls
+    // through to.
     constexpr long corruption_interval = 10000;
     std::uniform_int_distribution<int> corrupt_len_dist(4, 24);
     std::uniform_int_distribution<int> corrupt_byte_dist(0, 255);

@@ -49,6 +49,13 @@ public:
         return static_cast<std::size_t>(buffer_end_ - next_);
     }
 
+    /**
+     * \brief Backfill BodyLength and append the CheckSum trailer.
+     *
+     * `false` (and sticky error) when no `push_back_header` preceded it, the
+     * body exceeds BodyLength's 6 digits (999999), or the trailer does not
+     * fit. `CalculateChecksum = false` emits a literal `10=000` stub.
+     */
     template <bool CalculateChecksum = true>
     [[nodiscard]] bool push_back_trailer() noexcept {
         if (error_) [[unlikely]]
@@ -372,6 +379,11 @@ public:
             std::chrono::sys_time<std::chrono::nanoseconds>{std::chrono::nanoseconds{epoch_nanos}});
     }
 
+    /**
+     * \brief Append a data-field pair: `tag_data_length=<len>` is emitted
+     * automatically, then `tag_data=<bytes>` verbatim (SOH in the value is
+     * legal — that is what the length field is for).
+     */
     void push_back_data(int tag_data_length, int tag_data, char const* begin, char const* end) noexcept {
         if (error_) [[unlikely]]
             return;
@@ -423,7 +435,8 @@ private:
 
 /**
  * \brief Build one FIX message via `body(writer)` and push_back_trailer. Returns
- * `false` on overflow; `end_out` set to one past the last byte on success.
+ * `false` on any writer error — overflow, or `body` never called
+ * `push_back_header`; `end_out` set to one past the last byte on success.
  */
 template <class F>
 [[nodiscard]] inline bool try_write_message(std::span<char> buffer, char*& end_out, F&& body) noexcept {

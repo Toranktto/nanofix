@@ -36,7 +36,7 @@ inline void assert_fail([[maybe_unused]] char const* msg) noexcept {
 }
 }  // namespace detail
 
-/** \brief Monotonic count of `NANOFIX_ASSERT` failures. */
+/** \brief Count of `NANOFIX_ASSERT` failures since start (or last reset). */
 [[nodiscard]] inline std::uint64_t assert_failure_count() noexcept {
     return detail::assert_failure_counter().load(std::memory_order_relaxed);
 }

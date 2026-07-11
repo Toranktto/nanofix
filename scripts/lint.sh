@@ -1,8 +1,9 @@
 #!/bin/sh
 # Run clang-tidy over the library and the CLI tools, using the build's
-# compile_commands.json. The library header is linted through the .cpp
-# TUs that include it; HeaderFilterRegex in .clang-tidy bounds diagnostics
-# to include/nanofix.hpp (generated headers and third-party code excluded).
+# compile_commands.json. The library headers are linted through the .cpp
+# TUs that include them; HeaderFilterRegex in .clang-tidy bounds diagnostics
+# to include/nanofix.hpp and the hand-written detail/ headers (generated
+# headers and third-party code excluded).
 # Pass a build dir as $1 or via BUILD_DIR.
 #
 #   scripts/lint.sh [build-dir]

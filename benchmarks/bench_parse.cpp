@@ -443,8 +443,8 @@ void BM_Parse_BuildFieldIndex(benchmark::State& state, Dataset const* ds) {
     state.SetItemsProcessed(static_cast<int64_t>(total_messages));
 }
 
-// Mixed-probe set defeats branch prediction caching on the bitmap lookup.
-// Delta vs BM_Parse_IterAllFields = whitelist overhead in realistic workload.
+// Delta vs BM_Parse_IterAllFields = is_known_tag overhead on a realistic
+// stream (dataset tags are all known, so the reject branch stays cold).
 void BM_Parse_IterAllFields_Whitelist(benchmark::State& state, Dataset const* ds) {
     char const* begin = ds->data.data();
     char const* end = begin + ds->data.size();

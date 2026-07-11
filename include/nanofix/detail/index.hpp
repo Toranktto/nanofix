@@ -116,6 +116,7 @@ public:
      */
     [[nodiscard]] bool truncated() const { return truncated_; }
 
+    /// \warning Unchecked: `i` must be `< field_count()` (as is `value_at`).
     int tag_at(std::size_t i) const { return tags_[i]; }
 
     field_value value_at(std::size_t i) const {
@@ -131,7 +132,8 @@ public:
     /**
      * \brief Find `tag` by index, scanning `[hint, field_count())` then wrapping
      * to `[0, hint)`. On hit sets `hint` to the found index and returns its
-     * value; on miss leaves `hint` unchanged and returns an empty `field_value`.
+     * value; on miss returns an empty `field_value` and leaves `hint` unchanged
+     * — except a `hint` past `field_count()`, which is reset to `0` up front.
      *
      * `hint == 0` gives first-occurrence. `hint > 0` gives the nearest
      * occurrence at-or-after `hint` — for a tag repeated across group entries
@@ -398,16 +400,18 @@ private:
  *
  * Builds the index, checks `truncated()` exactly once, then calls
  * `fn(accessor)` with a concrete `indexed_fields<N>&` (message fit the buffer)
- * or `iter_fields&` (it did not). Each accessor's `find(tag)` is branch-free —
- * the index↔iterator decision lives here, not in the per-lookup hot path. `fn`
- * is instantiated for both accessor types, so write it as a generic lambda:
+ * or `iter_fields&` (it did not). Each accessor's `find(tag)` is dispatch-free
+ * — the index↔iterator decision lives here, not in the per-lookup hot path.
+ * `fn` is instantiated for both accessor types, so write it as a generic
+ * lambda:
  * \code
  * nanofix::field_index_buffer<64> buf;
  * for (auto const& m : nanofix::messages(wire))
  *     nanofix::with_fields(m, buf, [&](auto& f) {
- *         int qty = 0;
- *         f.find(tag::OrderQty).try_as_int(qty);
- *         auto px = f.find(tag::Price);          // empty() if absent
+ *         long qty_m = 0, qty_e = 0;
+ *         if (f.find(nanofix::tag::OrderQty).try_as_decimal(qty_m, qty_e))
+ *             consume(qty_m, qty_e);                       // OrderQty is a Qty
+ *         auto px = f.find(nanofix::tag::Price);           // empty() if absent
  *     });
  * \endcode
  * The buffer is caller-owned and reusable across messages. Returns whatever

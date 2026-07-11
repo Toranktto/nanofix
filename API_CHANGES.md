@@ -23,10 +23,16 @@ if (!w.push_back_trailer())     // false == didn't fit
     return too_small();
 ```
 
-`ok()` checks mid-stream if you need it. A malformed *read* buffer still
-surfaces through `is_valid()` / `is_complete()` as before — but calling an
-accessor on a reader you never validated is now a caught programmer error
-(`NANOFIX_ASSERT`) instead of UB.
+`ok()` (or its negation `has_error()`) checks mid-stream if you need it, and
+`buffer_size_remaining()` reports the space left. The free helper
+`try_write_message(buffer, end_out, body)` wraps the write-then-check shape
+above into one call: it runs `body(writer)`, pushes the trailer, and returns
+`false` on overflow. A malformed *read* buffer still surfaces through
+`is_valid()` / `is_complete()` as before — and `reader.error()` now says *why*
+a complete message failed framing (a `parse_error` enum that maps to the FIX
+SessionRejectReason a gateway would emit) — but calling an accessor on a
+reader you never validated is now a caught programmer error (`NANOFIX_ASSERT`)
+instead of UB.
 
 **`std::string` is gone.** `as_string()` is removed; read with
 `as_string_view()` or `bytes()` (a `std::span<char const>`, may hold embedded
@@ -121,8 +127,8 @@ Rules of thumb:
 nanofix::field_index_buffer<64> buf;
 for (auto const& m : nanofix::messages(wire)) {
     nanofix::with_fields(m, buf, [&](auto& f) {
-        int qty = 0;
-        f.find(tag::OrderQty).try_as_int(qty);
+        long qty_m = 0, qty_e = 0;
+        f.find(tag::OrderQty).try_as_decimal(qty_m, qty_e);  // OrderQty is a Qty
         auto px = f.find(tag::Price);      // empty() if absent
     });
 }
@@ -188,10 +194,16 @@ trailing message can be re-fed on the next read.
   (`push_back_trailer<false>()` to skip), not a runtime `bool`.
 - **`find_with_hint`** is also a reader member, `reader.find_with_hint(tag,
   it)`, beside the upstream free function.
+- **`field_value::or_else(f)`** — `*this` if non-empty, else `f()`. Chains
+  fallback lookups (e.g. index first, iterator second) without an `if` per
+  tier; `f` runs only on a miss.
+- **`indexed_message::has(tag)`** — presence-only query on an index, for when
+  the value itself is not needed.
 - **Asserts** — `assert_failure_count()` / `reset_assert_failure_count()` read
   and clear the counter, `set_assert_handler()` installs a callback,
-  `-DNANOFIX_ASSERT_FAILFAST` traps. `NANOFIX_ASSERT` is defined unconditionally;
-  customize via `set_assert_handler`, not by redefining the macro.
+  `-DNANOFIX_ASSERT_FAILFAST` calls `std::abort()` after the handler.
+  `NANOFIX_ASSERT` is defined unconditionally; customize via
+  `set_assert_handler`, not by redefining the macro.
 - **Version macros** — `NANOFIX_VERSION` (string, e.g. `1.2.3` or
   `1.2.3+5.gabc1234` on dev builds) and `NANOFIX_VERSION_MAJOR` / `_MINOR` /
   `_PATCH` (ints) in `nanofix/detail/version.hpp`, available through

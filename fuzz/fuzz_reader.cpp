@@ -62,7 +62,7 @@ void exercise_groups(nanofix::message_reader const& r) noexcept {
                 (void)it->tag();
                 exercise_field_value(it->value());
             }
-            // Exercises group-entry build_field_index (kMax32 guard path).
+            // Exercises the group-entry build_field_index overload.
             nanofix::field_index_buffer<32> ibuf;
             auto eidx = nanofix::build_field_index(entry, ibuf);
             std::size_t hint = 0;

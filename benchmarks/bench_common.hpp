@@ -67,7 +67,6 @@ inline double to_ns(std::uint64_t ticks) noexcept {
     return static_cast<double>(ticks) / ticks_per_ns();
 }
 
-// Run the one-off calibration outside the timed region.
 inline void calibrate() noexcept {
     (void)ticks_per_ns();
 }

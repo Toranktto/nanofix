@@ -340,7 +340,8 @@ struct is_time_point : std::false_type {};
 template <typename Clock, typename Duration>
 struct is_time_point<std::chrono::time_point<Clock, Duration>> : std::true_type {};
 
-// Past year 2200, days_since_epoch * 86400 * 1e9 overflows int64.
+// days_since_epoch * 86400 * 1e9 overflows int64 around year 2262; cap at
+// 2200 to keep margin below the exact edge.
 inline constexpr int kMinSupportedYear = 1970;
 inline constexpr int kMaxSupportedYear = 2200;
 

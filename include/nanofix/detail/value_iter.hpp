@@ -69,23 +69,13 @@ NANOFIX_ALWAYS_INLINE char const* scan_tag_digits(char const* p,
 }  // namespace detail
 
 /**
- * \brief FIX field value for nanofix::message_reader.
+ * \brief FIX field value for nanofix::message_reader: a `begin(),end()` byte
+ * range into the reader's buffer delimiting one field's value.
  *
- * <h3>Usage</h3>
- *
- * This class is a range `begin(),end()` of pointers into
- * a `message_reader` buffer which delimit the value for one field.
- *
- * FIX field values are an array of chars, and are usually ASCII.
- * Type conversion deserialization is provided by the `as_` family
- * of methods.
- *
- * <h3>Extension</h3>
- *
- * If the `as_` methods do not deserialize a type the way you need, read the
- * raw bytes delimited by `begin(),end()` and convert them yourself.
- *
-*/
+ * The validating `try_as_*` family is the default deserialization surface;
+ * `as_*_unchecked` variants trade validation for speed on pre-validated
+ * input. For anything else, read the raw bytes and convert yourself.
+ */
 class field_value {
 public:
     constexpr field_value() noexcept = default;
@@ -104,7 +94,7 @@ public:
     [[nodiscard]] std::span<char const> bytes() const noexcept { return {begin_, size()}; }
 
     /** \brief True when the value spans no bytes — what a missed lookup
-     *  (`find_at` / `find_with_hint`) returns. */
+     *  (`find` / `find_with_hint`) returns. */
     [[nodiscard]] bool empty() const noexcept { return begin_ == end_; }
 
     /** \brief `*this` if non-empty, else `f()` (returns `field_value`). `f`
@@ -112,7 +102,7 @@ public:
      *  fallback lookups left to right:
      *  \code
      *  auto px = primary.or_else([&]{ return idx.find_with_hint(54, h); })
-     *                   .or_else([&]{ return iter_find(54); });
+     *                   .or_else([&]{ return iter_fields(r).find(54); });
      *  \endcode */
     template <class F>
     [[nodiscard]] NANOFIX_ALWAYS_INLINE field_value or_else(F&& f) const {
@@ -383,7 +373,12 @@ public:
 
     /**
      * \brief Parse a LocalMktDate or UTCDate `YYYYMMDD` field.
-     * Out-params set only on success.
+     *
+     * Validates length only (8 bytes); the digits parse unchecked, so
+     * non-digit content yields undefined values with `true` still returned.
+     * Range-check the out-params when the source is untrusted.
+     *
+     * \return `true` only if `size() == 8`; out-params unmodified on `false`.
      */
     [[nodiscard]] bool as_date(int& year, int& month, int& day) const noexcept {
         return detail::atodate(begin(), end(), year, month, day);
@@ -412,8 +407,10 @@ public:
     }
 
     /**
-     * \brief Parse a UTCTimeOnly `HH:MM:SS[.sss]` field. Out-params set
-     * only on success.
+     * \brief Parse a UTCTimeOnly `HH:MM:SS[.sss]` field.
+     *
+     * Validates length only (8 or 12 bytes); separators and digits parse
+     * unchecked — see `as_date` for the untrusted-input consequence.
      */
     [[nodiscard]] bool as_timeonly(int& hour, int& minute, int& second, int& millisecond) const noexcept {
         return detail::atotime(begin(), end(), hour, minute, second, millisecond);
@@ -421,8 +418,10 @@ public:
 
     /**
      * \brief Parse a UTCTimeOnly field with nanosecond precision
-     * (`HH:MM:SS[.sss|.ssssss|.sssssssss]`). Out-params set only on
-     * success.
+     * (`HH:MM:SS[.sss|.ssssss|.sssssssss]`).
+     *
+     * Fractional digits are validated (non-digits reject); the `HH:MM:SS`
+     * part parses unchecked like `as_timeonly`.
      */
     [[nodiscard]] bool as_timeonly_nano(int& hour,
                                         int& minute,
@@ -433,8 +432,8 @@ public:
 
     /**
      * \brief Parse a UTCTimestamp `YYYYMMDD-HH:MM:SS[.sss]` field.
-     * Date-part length is checked via short-circuit `&&` after the time
-     * part parses. Out-params set only on success.
+     * Validation strength as in `as_date` + `as_timeonly` (length checks
+     * only; digits unchecked).
      */
     [[nodiscard]] bool as_timestamp(int& year,
                                     int& month,
@@ -451,8 +450,7 @@ public:
 
     /**
      * \brief Parse a UTCTimestamp field with nanosecond precision.
-     * Date-part length is checked via short-circuit `&&` after the time
-     * part parses. Out-params set only on success.
+     * Validation strength as in `as_date` + `as_timeonly_nano`.
      */
     [[nodiscard]] bool as_timestamp_nano(int& year,
                                          int& month,
@@ -477,7 +475,12 @@ public:
         return tp.time_since_epoch().count();
     }
 
-    /** \brief UTCTimestamp as signed epoch milliseconds, or nullopt. */
+    /**
+     * \brief UTCTimestamp as signed epoch milliseconds, or nullopt.
+     * Millisecond wire precision at most: a `.ssssss`/`.sssssssss` timestamp
+     * returns nullopt rather than silently truncating — use
+     * `as_epoch_nanos` for those.
+     */
     [[nodiscard]] std::optional<std::int64_t> as_epoch_millis() const noexcept {
         std::chrono::sys_time<std::chrono::milliseconds> tp;
         if (!detail::atotimepoint(begin(), end(), tp))
@@ -624,8 +627,6 @@ private:
 
 /**
  * \brief A FIX field for nanofix::message_reader, with tag and nanofix::field_value.
- *
- * This class is the nanofix::message_reader::value_type for the nanofix::message_reader Container.
  */
 class field {
 public:
@@ -643,8 +644,8 @@ private:
 /**
  * \brief The iterator type for nanofix::message_reader.
  *
- * Satisfies the const Input Iterator Concept for an immutable nanofix::message_reader
- * container of fields.
+ * Satisfies the const Forward Iterator concept (multipass) for an immutable
+ * nanofix::message_reader container of fields.
  */
 class message_reader_const_iterator {
 public:
@@ -741,9 +742,6 @@ private:
     void increment();
 };
 
-/**
- * \brief A predicate constructed with a FIX tag which returns true if the tag of the nanofix::field passed to the predicate is equal.
- */
 struct tag_equal {
     tag_equal(int t) : tag(t) {}
 
@@ -774,11 +772,13 @@ struct tag_equal {
  * \code
  * nanofix::message_reader::const_iterator i = reader.begin();
  *
- * if (nanofix::find_with_hint(reader.begin(), reader.end(), nanofix::tag_equal(nanofix::tag::MsgSeqNum), i))
- *   int seqnum = i++->as_int_unchecked<int>();
+ * int seqnum = 0;
+ * if (nanofix::find_with_hint(reader.begin(), reader.end(), nanofix::tag_equal(nanofix::tag::MsgSeqNum), i)
+ *     && i++->value().try_as_int(seqnum))
+ *   consume(seqnum);
  *
  * if (nanofix::find_with_hint(reader.begin(), reader.end(), nanofix::tag_equal(nanofix::tag::TargetCompID), i))
- *   std::string_view targetcompid = i++->as_string_view();
+ *   std::string_view targetcompid = i++->value().as_string_view();
  * \endcode
  *
  * See also the convenience method nanofix::message_reader::find_with_hint.

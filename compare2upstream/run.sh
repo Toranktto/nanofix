@@ -2,6 +2,7 @@
 # Bench N configurations and render comparison tables.
 # Env: NANOFIX_UPSTREAM_URL, NANOFIX_UPSTREAM_REF, NANOFIX_BENCH_MIN_TIME (1s),
 #      NANOFIX_BENCH_REPETITIONS (5),
+#      NANOFIX_BENCH_CPU (unset; Linux core to pin the benches to),
 #      COMPARE2UPSTREAM_DIR (default: <repo>/compare2upstream),
 #      PYTHON (default: python3), CONAN (default: conan).
 

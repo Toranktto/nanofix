@@ -27,7 +27,7 @@ validation alone never sums the bytes), and pulls business fields out via
 Publish `nanofix` to the local Conan cache once (from the repo root):
 
 ```sh
-conan create ../.. --build=missing \
+conan create . --build=missing \
     -s compiler.cppstd=gnu20 -s:b compiler.cppstd=gnu20 \
     -c tools.build:skip_test=True
 ```
@@ -35,6 +35,7 @@ conan create ../.. --build=missing \
 Then build the example:
 
 ```sh
+cd examples/fix44_gateway
 conan install . --output-folder=build --build=missing \
     -s build_type=Release \
     -s compiler.cppstd=gnu20 -s:b compiler.cppstd=gnu20

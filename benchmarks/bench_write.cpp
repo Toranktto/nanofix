@@ -22,9 +22,9 @@ void BM_WriteLogon(benchmark::State& state) {
     int seq = 0;
     std::size_t total = 0;
     for (auto _ : state) {
-        // Re-opaque the invariants each iteration: with everything inlined the
-        // compiler can otherwise hoist the timestamp formatting and fold the
-        // constant seq, collapsing the bench into a memcpy replay.
+        // Re-opaque the loop-invariant timestamp each iteration: with
+        // everything inlined the compiler can otherwise hoist its formatting,
+        // collapsing the bench into a memcpy replay.
         benchmark::DoNotOptimize(tsend);
         std::size_t n = write_logon(buffer, sizeof(buffer), 1000 + (seq++ & 8191), tsend);
         benchmark::DoNotOptimize(buffer);
@@ -66,7 +66,7 @@ void BM_WriteNewOrder_EpochNanos(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(total));
 }
 
-// Closure form via try_write_message: exercises the noexcept-overflow path
+// Closure form via try_write_message: exercises the overflow-checked API
 // and reports the same shape as BM_WriteNewOrder.
 void BM_WriteNewOrder_Closure(benchmark::State& state) {
     char buffer[kBufSize];
