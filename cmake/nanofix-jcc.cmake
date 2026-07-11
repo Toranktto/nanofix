@@ -1,0 +1,33 @@
+# JCC-erratum mitigation for benchmark targets.
+
+include(CheckCXXCompilerFlag)
+
+function(nanofix_add_jcc_mitigation target)
+    if(MSVC)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            check_cxx_compiler_flag(/clang:-mbranches-within-32B-boundaries
+                                    NANOFIX_JCC_CLANGCL_FLAG)
+            if(NANOFIX_JCC_CLANGCL_FLAG)
+                target_compile_options(${target} PRIVATE
+                    /clang:-mbranches-within-32B-boundaries)
+            endif()
+            return()
+        endif()
+        check_cxx_compiler_flag(/QIntel-jcc-erratum NANOFIX_JCC_MSVC_FLAG)
+        if(NANOFIX_JCC_MSVC_FLAG)
+            target_compile_options(${target} PRIVATE /QIntel-jcc-erratum)
+        endif()
+        return()
+    endif()
+    check_cxx_compiler_flag(-mbranches-within-32B-boundaries NANOFIX_JCC_DRIVER_FLAG)
+    if(NANOFIX_JCC_DRIVER_FLAG)
+        target_compile_options(${target} PRIVATE -mbranches-within-32B-boundaries)
+        target_link_options(${target} PRIVATE -mbranches-within-32B-boundaries)
+        return()
+    endif()
+    check_cxx_compiler_flag(-Wa,-mbranches-within-32B-boundaries NANOFIX_JCC_WA_FLAG)
+    if(NANOFIX_JCC_WA_FLAG)
+        target_compile_options(${target} PRIVATE -Wa,-mbranches-within-32B-boundaries)
+        target_link_options(${target} PRIVATE -Wa,-mbranches-within-32B-boundaries)
+    endif()
+endfunction()

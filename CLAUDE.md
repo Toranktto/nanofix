@@ -104,6 +104,10 @@ Authoritative A/B numbers come from **Linux**, pinned and isolated:
   (`echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo`), and disable
   the SMT sibling of the chosen core.
 - Real-time priority optional: `chrt -f 80 taskset -c <cpu> ./bench`.
+- Code-layout variance: bench targets compile with the JCC-erratum
+  mitigation (`cmake/nanofix-jcc.cmake`, branch padding off 32B boundaries
+  on x86-64) — without it, unrelated edits to always-inline headers flip
+  multi-percent penalties on Skylake-family hosts between binaries.
 
 **macOS has no hard pinning** — `thread_policy_set` affinity tags are
 hints the scheduler may ignore, and Apple Silicon P/E-core migration adds

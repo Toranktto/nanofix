@@ -23,6 +23,11 @@ target_compile_definitions(nanofix_benchmarks PRIVATE
     NANOFIX_ASSERT_FAILFAST  # a tripped assert aborts instead of skewing timings
 )
 
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nanofix-jcc.cmake)
+    nanofix_add_jcc_mitigation(nanofix_benchmarks)
+endif()
+
 add_custom_target(bench_data
     COMMAND ${CMAKE_COMMAND} -E make_directory ${NANOFIX_BENCH_DATA_DIR}
     COMMAND $<TARGET_FILE:fixgen>

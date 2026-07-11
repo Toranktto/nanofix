@@ -10,8 +10,6 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Path to an upstream jamesdbrock/hffix include tree; must contain hffix.hpp.
-# scripts/run.sh sets this to the cloned upstream-src.
 set(NANOFIX_UPSTREAM_INCLUDE_DIR "" CACHE PATH
     "Path to upstream jamesdbrock/hffix include directory (must contain hffix.hpp).")
 if(NOT NANOFIX_UPSTREAM_INCLUDE_DIR)
@@ -25,9 +23,6 @@ if(NOT EXISTS "${NANOFIX_UPSTREAM_INCLUDE_DIR}/hffix.hpp")
         "does not contain hffix.hpp.")
 endif()
 
-# Shared dataset path with the main repo's nanofix_benchmarks. This project lives
-# at compare2upstream/upstream-benchmarks/, so the repo's benchmarks/data is two
-# levels up.
 set(NANOFIX_BENCH_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../benchmarks/data"
     CACHE PATH "Directory holding .fix datasets")
 
@@ -68,4 +63,10 @@ target_compile_definitions(upstream_benchmarks PRIVATE
     NANOFIX_BENCH_DATA_DIR="${NANOFIX_BENCH_DATA_DIR}")
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(upstream_benchmarks PRIVATE /Zc:__cplusplus)
+endif()
+
+# Same mitigation as the fork suite so the comparison stays apples-to-apples.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/nanofix-jcc.cmake)
+    nanofix_add_jcc_mitigation(upstream_benchmarks)
 endif()
