@@ -17,17 +17,9 @@ Nothing else. No transport, no session layer, no business logic.
    `malloc` on any reader or writer path. Buffer is always
    caller-supplied. Views are spans/string_views into that buffer.
 3. **No exceptions.** Reader and writer methods are
-   `noexcept`. Errors surface via return code or sticky flag.
-   Programmer-error invariants use `NANOFIX_ASSERT`, which has one path
-   independent of `NDEBUG`: a failed assert bumps an atomic counter
-   (`nanofix::assert_failure_count()`) and runs any installed handler
-   (`set_assert_handler`), then returns. Build with
-   `-DNANOFIX_ASSERT_FAILFAST` to also trap after the handler — the
-   benchmarks and fuzz harness do, so a tripped invariant aborts (the
-   fuzzer needs the signal to flag it; benches must not produce skewed
-   timings). `NANOFIX_ASSERT` is defined unconditionally (no `#ifndef` guard);
-   customize the failure behavior at runtime via `set_assert_handler`, not by
-   redefining the macro. Tests assert against the counter, not a trap.
+   `noexcept`. Errors surface via return code or sticky flag;
+   programmer-error invariants use `NANOFIX_ASSERT` (see
+   ## `NANOFIX_ASSERT` below).
 4. **Header-only.** Hand-written code lives in `include/nanofix/detail/*.hpp`
    (split by area: `config`, `diagnostics`, `simd`, `numeric`, `writer`,
    `value_iter`, `reader`, `index`, `typed`); `include/nanofix.hpp` is the umbrella that
@@ -40,6 +32,18 @@ Nothing else. No transport, no session layer, no business logic.
    delimiter_tag)` overload (caller supplies the delimiter); there is no
    compile-time `group<>` dispatch — a group's delimiter can differ per MsgType.
 5. **C++20.** Do not gate features on older standards.
+
+## `NANOFIX_ASSERT`
+
+One path independent of `NDEBUG`: a failed assert bumps an atomic counter
+(`nanofix::assert_failure_count()`) and runs any installed handler
+(`set_assert_handler`), then returns. Build with
+`-DNANOFIX_ASSERT_FAILFAST` to also trap after the handler — the
+benchmarks and fuzz harness do, so a tripped invariant aborts (the
+fuzzer needs the signal to flag it; benches must not produce skewed
+timings). `NANOFIX_ASSERT` is defined unconditionally (no `#ifndef` guard);
+customize the failure behavior at runtime via `set_assert_handler`, not by
+redefining the macro. Tests assert against the counter, not a trap.
 
 ## Hot-path conventions
 
@@ -296,6 +300,50 @@ ctest --test-dir build-asan/build/Debug
 Use ASan/UBSan whenever touching reader state machines (`init()`,
 `increment()`, `next_message_reader()`) or pointer arithmetic guards.
 
+## Fuzzing
+
+`fuzz/` is a standalone CMake project. Apple Clang lacks
+`libclang_rt.fuzzer`; use Homebrew LLVM:
+
+```sh
+cmake -S fuzz -B build/fuzz \
+    -DCMAKE_CXX_COMPILER=$(brew --prefix llvm)/bin/clang++ \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build/fuzz --target fuzz
+```
+
+`-DNANOFIX_FUZZ_MAX_TIME=<sec>` (a CMake var, set at configure) overrides
+the default 60s budget baked into the `fuzz` target. The
+`fuzz` target depends on `fuzz_dataset`, which copies `tests/data/*`
+into `build/fuzz/dataset/` at build time. libFuzzer mutates seeds and
+persists new coverage-relevant inputs into the same directory; the
+build tree is gitignored so nothing leaks into the repo. Crashes are
+written next to the working directory; replay with
+`build/fuzz/fuzz_reader ./crash-<hash>`.
+
+For a long campaign, `scripts/gcloud_fuzz.py --project <p> [--time 3600]`
+runs fuzz_reader on a fresh GCE VM with one job per vCPU, prints per-job
+coverage/stats to stdout, fetches any artifacts to `./fuzz-artifacts/`
+(exit non-zero when there are any), and deletes the VM.
+
+`fuzz/fix.dict` is a libFuzzer dictionary of FIX-shaped tokens (SOH,
+header/trailer tag prefixes, BeginString variants, MsgType, data-length
+pairs, group count tags, timestamp formats, minimum frames). Wired via
+`-dict=...` on the fuzz target. Extend it when adding fuzz coverage to
+a new tag family.
+
+`fuzz/fuzz_reader.cpp` exercises 18 group types (NoMDEntries, NoPartyIDs,
+NoOrders, NoLegs, NoSides, NoTrades, NoAllocs, NoContraBrokers,
+NoMiscFees, NoRelatedSym, NoQuoteEntries, NoExecs, NoFills, NoEvents,
+NoInstrAttrib, NoSecurityAltID, NoUnderlyings, NoTradingSessions) via
+the runtime-dispatched `r.group(count_tag, delim_tag)` overload plus
+`build_field_index(entry, ...)` on every encountered entry. Add to the
+`kGroups[]` table in that file to cover more.
+
+Add a regression test in `tests/unit_tests.cpp` for every crash the
+fuzzer finds, then re-run the harness until the dataset survives at
+least one full budget without hits.
+
 ## Synthetic dataset (`benchmarks/data/synthetic.fix`)
 
 The dataset is NOT committed (multi-GB at default size). Generate
@@ -364,33 +412,45 @@ What it does:
    `--benchmark_filter` that selects **only the benches the overview table
    consumes** (`BENCH_FILTER` in `run.sh`) — not the whole suite. Writes
    per-round JSON to `compare2upstream/results/`.
-5. `compare2upstream/render.py` prints a **small README overview**, five
-   compact tables (render.py's default `--tables` selection —
-   latency, throughput, newapi-latency, newapi-throughput, amortization):
-   write/read latency (p99/p999) and throughput on the iterator path; the
-   new access path (`build_field_index`) vs the upstream iterator as both
-   latency (p99/p999) and throughput, shown SIMD-on (`fork`)
-   and SIMD-off (`fork-no-simd`); and the index amortization break-even —
-   the per-message `find()` count at which `build_field_index` + indexed
-   lookups overtake the iterator, interpolated from
-   `BM_Parse_FindN_{Iter,Indexed}`. Write throughput is derived in
-   `render.py` as `1e9 / cpu_time` from the single-message `BM_WriteNewOrder`.
-   It is deliberately NOT the full per-path dump — detailed analysis comes from
-   the raw `benchmarks/` GB output. Tail percentiles include the per-message
-   latency probe (RDTSCP on x86-64, steady_clock elsewhere); both suites carry
-   the identical probe so its cost cancels from the comparison. Tables go to
-   stdout, progress to stderr; the committed snapshot at the repo root
-   (`X86_64.md`, linked from the README's "Indicative numbers" section) is
-   captured by redirecting: `compare2upstream/run.sh > X86_64.md`.
-   `scripts/gcloud_compare2upstream.py` runs the same harness on a fresh GCE
-   x86-64 VM (SMT off, bench core isolated via `isolcpus`/`nohz_full`/
-   `rcu_nocbs` + reboot, pinned to it, VM deleted afterwards) and prints the
-   tables the same way:
-   `scripts/gcloud_compare2upstream.py --project <p> > X86_64.md`.
+5. `compare2upstream/render.py` prints the tables (see below).
 
 Override URL / ref / timing via env: `NANOFIX_UPSTREAM_URL`,
 `NANOFIX_UPSTREAM_REF`, `NANOFIX_BENCH_MIN_TIME`,
 `NANOFIX_BENCH_REPETITIONS`.
+
+### Rendered tables
+
+`render.py` prints a **small README overview**: five compact tables
+(render.py's default `--tables` selection — latency, throughput,
+newapi-latency, newapi-throughput, amortization): write/read latency
+(p99/p999) and throughput on the iterator path; the new access path
+(`build_field_index`) vs the upstream iterator as both latency (p99/p999)
+and throughput, shown SIMD-on (`fork`) and SIMD-off (`fork-no-simd`); and
+the index amortization break-even — the per-message `find()` count at which
+`build_field_index` + indexed lookups overtake the iterator, interpolated
+from `BM_Parse_FindN_{Iter,Indexed}`. Write throughput is derived in
+`render.py` as `1e9 / cpu_time` from the single-message `BM_WriteNewOrder`.
+It is deliberately NOT the full per-path dump — detailed analysis comes
+from the raw `benchmarks/` GB output.
+
+Cells are medians across the rounds; a rep-to-rep `cpu_time` spread above
+2% on any bench prints a confounded-run warning to stderr. Tail
+percentiles include the per-message latency probe (RDTSCP on x86-64,
+steady_clock elsewhere); both suites carry the identical probe so its cost
+cancels from the comparison.
+
+### Committed snapshot and GCE
+
+Tables go to stdout, progress to stderr; the committed snapshot at the
+repo root (`X86_64.md`, linked from the README's "Indicative numbers"
+section) is captured by redirecting: `compare2upstream/run.sh > X86_64.md`.
+`scripts/gcloud_compare2upstream.py` runs the same harness on a fresh GCE
+x86-64 VM (SMT off, bench core isolated via `isolcpus`/`nohz_full`/
+`rcu_nocbs` + reboot, pinned to it, VM deleted afterwards) and prints the
+tables the same way:
+`scripts/gcloud_compare2upstream.py --project <p> > X86_64.md`.
+
+### Adding benches
 
 `compare2upstream/upstream-benchmarks/upstream_benchmarks.cpp` is intentionally limited
 to upstream's API (no `try_as_int`, no indexed message; iterator + writer
@@ -550,47 +610,3 @@ the "Added" section, removals/renames where upstream had a counterpart.
   which drops the index to zero usable fields — all-or-nothing).
 - Do not edit `compare2upstream/upstream-src/`; that tree is a
   pinned snapshot of upstream for differential benchmarking.
-
-## Fuzzing
-
-`fuzz/` is a standalone CMake project. Apple Clang lacks
-`libclang_rt.fuzzer`; use Homebrew LLVM:
-
-```sh
-cmake -S fuzz -B build/fuzz \
-    -DCMAKE_CXX_COMPILER=$(brew --prefix llvm)/bin/clang++ \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build/fuzz --target fuzz
-```
-
-`-DNANOFIX_FUZZ_MAX_TIME=<sec>` (a CMake var, set at configure) overrides
-the default 60s budget baked into the `fuzz` target. The
-`fuzz` target depends on `fuzz_dataset`, which copies `tests/data/*`
-into `build/fuzz/dataset/` at build time. libFuzzer mutates seeds and
-persists new coverage-relevant inputs into the same directory; the
-build tree is gitignored so nothing leaks into the repo. Crashes are
-written next to the working directory; replay with
-`build/fuzz/fuzz_reader ./crash-<hash>`.
-
-For a long campaign, `scripts/gcloud_fuzz.py --project <p> [--time 3600]`
-runs fuzz_reader on a fresh GCE VM with one job per vCPU, prints per-job
-coverage/stats to stdout, fetches any artifacts to `./fuzz-artifacts/`
-(exit non-zero when there are any), and deletes the VM.
-
-`fuzz/fix.dict` is a libFuzzer dictionary of FIX-shaped tokens (SOH,
-header/trailer tag prefixes, BeginString variants, MsgType, data-length
-pairs, group count tags, timestamp formats, minimum frames). Wired via
-`-dict=...` on the fuzz target. Extend it when adding fuzz coverage to
-a new tag family.
-
-`fuzz/fuzz_reader.cpp` exercises 18 group types (NoMDEntries, NoPartyIDs,
-NoOrders, NoLegs, NoSides, NoTrades, NoAllocs, NoContraBrokers,
-NoMiscFees, NoRelatedSym, NoQuoteEntries, NoExecs, NoFills, NoEvents,
-NoInstrAttrib, NoSecurityAltID, NoUnderlyings, NoTradingSessions) via
-the runtime-dispatched `r.group(count_tag, delim_tag)` overload plus
-`build_field_index(entry, ...)` on every encountered entry. Add to the
-`kGroups[]` table in that file to cover more.
-
-Add a regression test in `tests/unit_tests.cpp` for every crash the
-fuzzer finds, then re-run the harness until the dataset survives at
-least one full budget without hits.
