@@ -43,7 +43,7 @@ char out[256];
 nanofix::message_writer w(out);
 w.push_back_header("FIXT.1.1");
 w.push_back_string(nanofix::tag::MsgType, "D");
-w.push_back_int(nanofix::tag::OrderQty, 100);
+w.push_back_decimal(nanofix::tag::OrderQty, 100, 0);  // Qty is decimal
 w.push_back_decimal(nanofix::tag::Price, 50001, -2);
 if (!w.push_back_trailer()) return too_small();          // false == didn't fit
 char* end = w.message_end();
@@ -222,7 +222,8 @@ README-shaped overview — five compact tables, not the full suite:
 
 ### Indicative numbers
 
-`run.sh` prints the rendered tables to stdout (progress goes to stderr); the
+`compare2upstream/run.sh` prints the rendered tables to stdout (progress goes
+to stderr); the
 committed snapshot is captured by redirecting, e.g.
 `compare2upstream/run.sh > X86_64.md`:
 
@@ -231,11 +232,11 @@ committed snapshot is captured by redirecting, e.g.
   by `scripts/gcloud_compare2upstream.py`. Still a VM — no governor/turbo control
   from the guest — so treat it as one notch below a bare-metal `isolcpus` box.
 
-Headline shape on x86-64 (Cascade Lake): fork writes with ~60 % lower tail
-(p99 105 ns vs 247 ns) and ~20 % more throughput than upstream; iterator-path
-reads are like-for-like within a few percent (sequential) to ~+18 % (random);
-the indexed path is ~10-16× upstream's read throughput and cuts the read tail
-by an order of magnitude, paying for itself from ~9 `find()`s per message.
+Headline shape on x86-64 (Cascade Lake): fork writes with ~64 % lower tail
+(p99 85 ns vs 239 ns) and ~11 % more throughput than upstream; iterator-path
+reads are like-for-like with upstream; the indexed path is ~10-14× upstream's
+read throughput and cuts the read tail by an order of magnitude (p99 8.6 µs
+vs 85 µs), paying for itself from ~7-8 `find()`s per message.
 
 ## Generated spec headers
 
