@@ -90,8 +90,6 @@ BENCH_FILTER='^(BM_WriteNewOrder|BM_Write_TailLatency|BM_Parse_(Sequential|Rando
 
 BENCH_ARGS=(
     --benchmark_min_time="${MIN_TIME}"
-    --benchmark_repetitions="${REPS}"
-    --benchmark_report_aggregates_only=true
     --benchmark_enable_random_interleaving=true
     --benchmark_filter="${BENCH_FILTER}"
     --benchmark_format=json
@@ -107,18 +105,30 @@ if [[ -n ${NANOFIX_BENCH_CPU:-} ]]; then
     fi
 fi
 
-RENDER_ARGS=()
 for cfg in "${CONFIGS[@]}"; do
     IFS='|' read -r label source_dir exec_relpath extra <<< "${cfg}"
     build_dir="${BUILD}/${label}"
     target="${exec_relpath##*/}"
-    json="${RESULTS_DIR}/${label}.json"
-
-    echo ">> ${label}" >&2
+    echo ">> build ${label}" >&2
     ensure_configured "${build_dir}" "${source_dir}" "${extra}"
     cmake --build "${build_dir}" --target "${target}" > /dev/null
-    ${PIN[@]+"${PIN[@]}"} "${build_dir}/${exec_relpath}${EXE_SUFFIX}" "${BENCH_ARGS[@]}" > "${json}"
-    RENDER_ARGS+=("${label}=${json}")
+done
+
+for rep in $(seq 1 "${REPS}"); do
+    for cfg in "${CONFIGS[@]}"; do
+        IFS='|' read -r label source_dir exec_relpath extra <<< "${cfg}"
+        build_dir="${BUILD}/${label}"
+        json="${RESULTS_DIR}/${label}.rep${rep}.json"
+        echo ">> ${label} rep ${rep}/${REPS}" >&2
+        ${PIN[@]+"${PIN[@]}"} "${build_dir}/${exec_relpath}${EXE_SUFFIX}" "${BENCH_ARGS[@]}" > "${json}"
+    done
+done
+
+RENDER_ARGS=()
+for cfg in "${CONFIGS[@]}"; do
+    IFS='|' read -r label source_dir exec_relpath extra <<< "${cfg}"
+    files=$(ls "${RESULTS_DIR}/${label}".rep*.json | paste -sd, -)
+    RENDER_ARGS+=("${label}=${files}")
 done
 
 PINNED_NOTE="unpinned"
@@ -127,11 +137,9 @@ HEADER="# Benchmark overview — $(uname -m)
 
 > $(uname -sr), $(uname -m), ${PINNED_NOTE}. Generated $(date +%Y-%m-%d) by
 > \`compare2upstream/run.sh\` (\`min_time=${MIN_TIME}\`,
-> \`repetitions=${REPS}\`; cells are means over repetitions). \`fork\` is
-> nanofix; \`fork-no-simd\` is the same code with \`NANOFIX_DISABLE_SIMD\`;
-> \`upstream\` is jamesdbrock/hffix."
+> \`repetitions=${REPS}\`; cells are medians over config-alternating rounds).
+> \`fork\` is nanofix; \`fork-no-simd\` is the same code with
+> \`NANOFIX_DISABLE_SIMD\`; \`upstream\` is jamesdbrock/hffix."
 
-# Tables go to stdout; everything else this script prints is on stderr, so
-# the committed snapshot is `compare2upstream/run.sh > X86_64.md`.
 "${PYTHON_BIN}" "${BASE}/render.py" "${RENDER_ARGS[@]}" \
     --header "${HEADER}"

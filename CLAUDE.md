@@ -358,10 +358,12 @@ What it does:
    - `fork`: this repo, default flags (SIMD on).
    - `fork-no-simd`: this repo with `-DNANOFIX_DISABLE_SIMD=ON`. Isolates
      SIMD's contribution from the rest of the fork's changes.
-4. Runs each binary with the same `--benchmark_*` args, including a
+4. Runs the binaries in config-alternating rounds (A,B,C, A,B,C, …,
+   `NANOFIX_BENCH_REPETITIONS` rounds, one repetition per invocation) so
+   slow host drift lands evenly on every config, with a
    `--benchmark_filter` that selects **only the benches the overview table
-   consumes** (`BENCH_FILTER` in `run.sh`) — not the whole suite. Writes JSON
-   to `compare2upstream/results/`.
+   consumes** (`BENCH_FILTER` in `run.sh`) — not the whole suite. Writes
+   per-round JSON to `compare2upstream/results/`.
 5. `compare2upstream/render.py` prints a **small README overview**, five
    compact tables (render.py's default `--tables` selection —
    latency, throughput, newapi-latency, newapi-throughput, amortization):

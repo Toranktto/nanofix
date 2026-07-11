@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Render a small README overview table from Google Benchmark JSON.
 
-    render.py [--tables LIST] LABEL=PATH [LABEL=PATH ...]
+    render.py [--tables LIST] LABEL=PATH[,PATH...] [LABEL=PATH[,PATH...] ...]
 
-The first column (conventionally `upstream`) is the baseline for deltas. Five
-compact tables: write/read latency and throughput on the iterator path, the
-new access path (build_field_index) vs the upstream iterator as both latency
-and throughput, and the index amortization break-even. Not a full per-path
-dump — the detailed benches live in `benchmarks/` and are read from raw GB
-output."""
+The first column (conventionally `upstream`) is the baseline for deltas.
+Multiple paths per label are repetition rounds: cells are medians across
+them, and a rep-to-rep spread above 2% on any bench prints a confounded-run
+warning to stderr (CLAUDE.md: discard and re-run). Five compact tables:
+write/read latency and throughput on the iterator path, the new access path
+(build_field_index) vs the upstream iterator as both latency and throughput,
+and the index amortization break-even. Not a full per-path dump — the
+detailed benches live in `benchmarks/` and are read from raw GB output."""
 
 from __future__ import annotations
 
@@ -17,11 +19,15 @@ import contextlib
 import io
 import json
 import re
+import statistics
 import sys
 from typing import Optional
 
 
-def load(path: str) -> dict[str, dict[str, float]]:
+SPREADS: dict[str, dict[str, float]] = {}
+
+
+def _load_one(path: str) -> dict[str, dict[str, float]]:
     with open(path) as f:
         data = json.load(f)
     benches = data.get("benchmarks", [])
@@ -48,6 +54,21 @@ def load(path: str) -> dict[str, dict[str, float]]:
             continue
         name = b.get("run_name") or b["name"]
         out.setdefault(name, row(b))
+    return out
+
+
+def load(label: str, pathspec: str) -> dict[str, dict[str, float]]:
+    """Median across repetition rounds (comma-separated paths)."""
+    reps = [_load_one(p) for p in pathspec.split(",")]
+    out: dict[str, dict[str, float]] = {}
+    spreads: dict[str, float] = {}
+    for name in reps[0]:
+        rows = [r[name] for r in reps if name in r]
+        out[name] = {k: statistics.median([r[k] for r in rows]) for k in rows[0]}
+        vals = [r["cpu_time"] for r in rows if r["cpu_time"] > 0]
+        if len(vals) >= 2:
+            spreads[name] = (max(vals) - min(vals)) / statistics.median(vals)
+    SPREADS[label] = spreads
     return out
 
 
@@ -331,7 +352,7 @@ def parse_column(s: str) -> tuple[str, dict]:
     if "=" not in s:
         raise argparse.ArgumentTypeError(f"column spec must be LABEL=PATH, got {s!r}")
     label, path = s.split("=", 1)
-    return label, load(path)
+    return label, load(label, path)
 
 
 RENDERERS = {
@@ -369,6 +390,17 @@ def main(argv: list[str]) -> int:
     if args.out:
         with open(args.out, "w", encoding="utf-8", newline="\n") as f:
             f.write(buf.getvalue())
+
+    worst = max(((s, name, lbl) for lbl, per in SPREADS.items()
+                 for name, s in per.items()), default=None)
+    if worst:
+        s, name, lbl = worst
+        print(f"rep-to-rep spread: max {s * 100:.1f}% ({lbl} {name})",
+              file=sys.stderr)
+        if s > 0.02:
+            print("WARNING: spread exceeds 2% — run may be confounded "
+                  "(thermal / layout / background load); discard and re-run.",
+                  file=sys.stderr)
     return 0
 
 
