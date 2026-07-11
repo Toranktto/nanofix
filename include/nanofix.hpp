@@ -36,6 +36,7 @@ or implied, of T3 IP, LLC.
 
 #include <nanofix/detail/config.hpp>
 #include <nanofix/detail/diagnostics.hpp>
+#include <nanofix/detail/fields.hpp>
 #include <nanofix/detail/index.hpp>
 #include <nanofix/detail/numeric.hpp>
 #include <nanofix/detail/reader.hpp>

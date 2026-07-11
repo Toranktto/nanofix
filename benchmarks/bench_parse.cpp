@@ -3,7 +3,6 @@
 // Built with -DNANOFIX_ASSERT_FAILFAST (see CMakeLists): a tripped NANOFIX_ASSERT
 // aborts rather than counting and producing bogus timings.
 #include <nanofix.hpp>
-#include <nanofix/detail/fields.hpp>
 
 #include <algorithm>
 #include <array>

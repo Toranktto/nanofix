@@ -4,7 +4,6 @@
 #include <span>
 
 #include <nanofix.hpp>
-#include <nanofix/detail/fields.hpp>
 
 namespace {
 

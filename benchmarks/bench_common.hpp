@@ -3,7 +3,6 @@
 // Message builders and per-group register hooks shared by the bench_*.cpp files.
 
 #include <nanofix.hpp>
-#include <nanofix/detail/fields.hpp>
 
 #include <chrono>
 #include <cstddef>

@@ -3,7 +3,6 @@
 // Output is wire-format (no newlines); pipe through fixprint to inspect.
 
 #include <nanofix.hpp>
-#include <nanofix/detail/fields.hpp>
 
 #include <algorithm>
 #include <array>

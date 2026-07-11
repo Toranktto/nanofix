@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include <nanofix.hpp>
-#include <nanofix/detail/fields.hpp>
 #include <nanofix/names.hpp>
 
 #include <algorithm>

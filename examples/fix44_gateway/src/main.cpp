@@ -3,7 +3,6 @@
 // regenerated from fixspec/FIX44.xml by nanofix_generate() (fields + names).
 
 #include <nanofix.hpp>
-#include <nanofix/detail/fields.hpp>
 
 #include <chrono>
 #include <cstdint>

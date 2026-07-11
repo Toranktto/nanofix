@@ -3,7 +3,6 @@
 #include <benchmark/benchmark.h>
 
 #include <nanofix.hpp>
-#include <nanofix/detail/fields.hpp>
 
 #include <algorithm>
 #include <chrono>
