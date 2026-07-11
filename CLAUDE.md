@@ -19,7 +19,7 @@ Nothing else. No transport, no session layer, no business logic.
 3. **No exceptions.** Reader and writer methods are
    `noexcept`. Errors surface via return code or sticky flag;
    programmer-error invariants use `NANOFIX_ASSERT` (see
-   ## `NANOFIX_ASSERT` below).
+   `NANOFIX_ASSERT` below).
 4. **Header-only.** Hand-written code lives in `include/nanofix/detail/*.hpp`
    (split by area: `config`, `diagnostics`, `simd`, `numeric`, `writer`,
    `value_iter`, `reader`, `index`, `typed`); `include/nanofix.hpp` is the umbrella that
@@ -400,7 +400,7 @@ What it does:
 3. Builds three configs into
    `compare2upstream/build/{upstream,fork,fork-no-simd}/`:
    - `upstream`: standalone CMake project at `compare2upstream/upstream-benchmarks/`
-     building `hffix_upstream_benchmarks` against
+     building `upstream_benchmarks` against
      `compare2upstream/upstream-benchmarks/upstream_benchmarks.cpp` (only uses upstream
      API surface). Configured with `-DNANOFIX_UPSTREAM_INCLUDE_DIR=...`
      pointing at the cloned upstream-src include dir.

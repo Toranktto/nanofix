@@ -11,9 +11,19 @@ set(NANOFIX_BENCH_MIN_TIME "1s"
 
 add_executable(nanofix_benchmarks
     bench_parse.cpp
+    bench_parse_hot_iter.cpp
     bench_write.cpp
     bench_primitives.cpp
 )
+# The overview-table iterator sweeps live in a tiny TU kept out of LTO:
+# merged with the indexed benches' always-inline AVX2 bodies, GCC's
+# inline-unit-growth budget runs out and the iterator loops pessimize
+# (~18-19% on BM_Parse_{Sequential,Random}_Iter). A native object keeps its
+# own budget; everything else stays LTO.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(bench_parse_hot_iter.cpp PROPERTIES
+        COMPILE_OPTIONS "-fno-lto")
+endif()
 target_link_libraries(nanofix_benchmarks PRIVATE
     nanofix
     benchmark::benchmark

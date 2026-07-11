@@ -232,11 +232,11 @@ committed snapshot is captured by redirecting, e.g.
   by `scripts/gcloud_compare2upstream.py`. Still a VM — no governor/turbo control
   from the guest — so treat it as one notch below a bare-metal `isolcpus` box.
 
-Headline shape on x86-64 (Cascade Lake): fork writes with ~64 % lower tail
-(p99 85 ns vs 239 ns) and ~11 % more throughput than upstream; iterator-path
-reads are like-for-like with upstream; the indexed path is ~10-14× upstream's
+Headline shape on x86-64 (Cascade Lake): fork writes with ~68 % lower tail
+(p99 77 ns vs 239 ns) and ~12 % more throughput than upstream; iterator-path
+reads are ~20 % faster than upstream; the indexed path is ~10-14× upstream's
 read throughput and cuts the read tail by an order of magnitude (p99 8.6 µs
-vs 85 µs), paying for itself from ~7-8 `find()`s per message.
+vs 85 µs), paying for itself from ~7 `find()`s per message.
 
 ## Generated spec headers
 
