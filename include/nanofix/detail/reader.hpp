@@ -120,7 +120,7 @@ public:
      *
      * \pre `is_complete()`. Fires `NANOFIX_ASSERT` otherwise.
      */
-    NANOFIX_ALWAYS_INLINE message_reader next_message_reader() const {
+    message_reader next_message_reader() const {
         NANOFIX_ASSERT(is_complete_, "Can't call next_message_reader on an incomplete message.");
 
         if (!is_valid_) [[unlikely]] {  // resync by scanning for the next "8=FIX"
