@@ -19,10 +19,14 @@ namespace {
 void BM_WriteLogon(benchmark::State& state) {
     char buffer[kBufSize];
     auto tsend = live_timestamp();
-    benchmark::DoNotOptimize(tsend);
+    int seq = 0;
     std::size_t total = 0;
     for (auto _ : state) {
-        std::size_t n = write_logon(buffer, sizeof(buffer), 1, tsend);
+        // Re-opaque the invariants each iteration: with everything inlined the
+        // compiler can otherwise hoist the timestamp formatting and fold the
+        // constant seq, collapsing the bench into a memcpy replay.
+        benchmark::DoNotOptimize(tsend);
+        std::size_t n = write_logon(buffer, sizeof(buffer), 1000 + (seq++ & 8191), tsend);
         benchmark::DoNotOptimize(buffer);
         benchmark::ClobberMemory();
         total += n;
@@ -33,10 +37,11 @@ void BM_WriteLogon(benchmark::State& state) {
 void BM_WriteNewOrder(benchmark::State& state) {
     char buffer[kBufSize];
     auto tsend = live_timestamp();
-    benchmark::DoNotOptimize(tsend);
+    int seq = 0;
     std::size_t total = 0;
     for (auto _ : state) {
-        std::size_t n = write_new_order(buffer, sizeof(buffer), 1, tsend);
+        benchmark::DoNotOptimize(tsend);
+        std::size_t n = write_new_order(buffer, sizeof(buffer), 1000 + (seq++ & 8191), tsend);
         benchmark::DoNotOptimize(buffer);
         benchmark::ClobberMemory();
         total += n;
@@ -48,10 +53,12 @@ void BM_WriteNewOrder_EpochNanos(benchmark::State& state) {
     char buffer[kBufSize];
     auto epoch_nanos =
         std::chrono::duration_cast<std::chrono::nanoseconds>(live_timestamp().time_since_epoch()).count();
-    benchmark::DoNotOptimize(epoch_nanos);
+    int seq = 0;
     std::size_t total = 0;
     for (auto _ : state) {
-        std::size_t n = write_new_order_epoch_nanos(buffer, sizeof(buffer), 1, epoch_nanos);
+        benchmark::DoNotOptimize(epoch_nanos);
+        std::size_t n =
+            write_new_order_epoch_nanos(buffer, sizeof(buffer), 1000 + (seq++ & 8191), epoch_nanos);
         benchmark::DoNotOptimize(buffer);
         benchmark::ClobberMemory();
         total += n;
@@ -64,9 +71,10 @@ void BM_WriteNewOrder_EpochNanos(benchmark::State& state) {
 void BM_WriteNewOrder_Closure(benchmark::State& state) {
     char buffer[kBufSize];
     auto tsend = live_timestamp();
-    benchmark::DoNotOptimize(tsend);
+    int seq = 0;
     std::size_t total = 0;
     for (auto _ : state) {
+        benchmark::DoNotOptimize(tsend);
         char* end_out = nullptr;
         bool ok = nanofix::try_write_message(
             buffer, buffer + sizeof(buffer), end_out, [&](nanofix::message_writer& w) {
@@ -74,7 +82,7 @@ void BM_WriteNewOrder_Closure(benchmark::State& state) {
                 w.push_back_string(nanofix::tag::MsgType, "D");
                 w.push_back_string(nanofix::tag::SenderCompID, "AAAA");
                 w.push_back_string(nanofix::tag::TargetCompID, "BBBB");
-                w.push_back_int(nanofix::tag::MsgSeqNum, 1);
+                w.push_back_int(nanofix::tag::MsgSeqNum, 1000 + (seq++ & 8191));
                 w.push_back_timestamp(nanofix::tag::SendingTime, tsend);
                 w.push_back_string(nanofix::tag::ClOrdID, "A1");
                 w.push_back_char(nanofix::tag::HandlInst, '1');
@@ -112,6 +120,7 @@ void BM_Write_TailLatency(benchmark::State& state) {
         samples.clear();
         state.ResumeTiming();
         for (int i = 0; i < kBatch; ++i) {
+            benchmark::DoNotOptimize(tsend);
             std::uint64_t const t0 = probe::now();
             std::size_t n = write_new_order(buffer, sizeof(buffer), i, tsend);
             std::uint64_t const t1 = probe::now();

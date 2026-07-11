@@ -241,10 +241,14 @@ void BM_WriteLogon(benchmark::State& state) {
 void BM_WriteNewOrder(benchmark::State& state) {
     char buffer[kBufSize];
     auto tsend = live_timestamp();
-    benchmark::DoNotOptimize(tsend);
+    int seq = 0;
     std::size_t total = 0;
     for (auto _ : state) {
-        std::size_t n = write_new_order(buffer, sizeof(buffer), 1, tsend);
+        // Re-opaque the invariants each iteration: with everything inlined the
+        // compiler can otherwise hoist the timestamp formatting and fold the
+        // constant seq, collapsing the bench into a memcpy replay.
+        benchmark::DoNotOptimize(tsend);
+        std::size_t n = write_new_order(buffer, sizeof(buffer), 1000 + (seq++ & 8191), tsend);
         benchmark::DoNotOptimize(buffer);
         benchmark::ClobberMemory();
         total += n;
@@ -268,6 +272,7 @@ void BM_Write_TailLatency(benchmark::State& state) {
         samples.clear();
         state.ResumeTiming();
         for (int i = 0; i < kBatch; ++i) {
+            benchmark::DoNotOptimize(tsend);
             std::uint64_t const t0 = latency_probe::now();
             std::size_t n = write_new_order(buffer, sizeof(buffer), i, tsend);
             std::uint64_t const t1 = latency_probe::now();
