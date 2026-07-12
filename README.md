@@ -124,8 +124,25 @@ m.group(tag::NoMDEntries, tag::MDUpdateAction)  // incremental delimiter
 ```
 
 `build_field_index(entry, buf)` also works on a single entry when an entry
-carries enough fields to amortize the index. See
-[examples/fix50_mdmonitor](examples/fix50_mdmonitor/) for a worked group reader.
+carries enough fields to amortize the index. There is no entry-scope
+`with_fields` in the library, but the tiered shape is four lines — index the
+entry, fall back to the entry's forward-scan `find` on overflow:
+
+```cpp
+template <std::size_t N, class Fn>
+auto with_entry_fields(nanofix::group_entry const& e,
+                       nanofix::field_index_buffer<N>& buf, Fn&& fn) {
+    auto const idx = nanofix::build_field_index(e, buf);
+    if (!idx.truncated()) {
+        nanofix::indexed_fields<N> f(idx);
+        return fn(f);
+    }
+    return fn(e);
+}
+```
+
+See [examples/fix50_mdmonitor](examples/fix50_mdmonitor/) for this helper
+inside a worked group reader.
 
 Sharp edge: entry boundaries are "next delimiter occurrence", so the *last*
 entry extends to the end of the body — message-level fields placed after the
@@ -242,7 +259,7 @@ build each on its own; exercised in CI):
 | App | Spec | Shows |
 | --- | --- | --- |
 | [fix44_gateway](examples/fix44_gateway/) | QuickFIX `FIX44.xml` | `message_writer`, `for_each_message`, `with_fields` (index↔iterator), custom-spec codegen via `nanofix_generate()` |
-| [fix50_mdmonitor](examples/fix50_mdmonitor/) | bundled FIX 5.0 SP2 + FIXT 1.1 | per-MsgType `NoMDEntries` repeating-group read on market-data snapshot/incremental (delimiter differs per MsgType), per-entry typed `find(tag::X)`, tiered per-entry index (`build_field_index(entry, …)` with forward-scan fallback), enum decode via `nanofix/names.hpp` |
+| [fix50_mdmonitor](examples/fix50_mdmonitor/) | bundled FIX 5.0 SP2 + FIXT 1.1 | per-MsgType `NoMDEntries` repeating-group read on market-data snapshot/incremental (delimiter differs per MsgType), per-entry typed `find(tag::X)`, tiered per-entry index (the `with_entry_fields` helper: `build_field_index(entry, …)` with forward-scan fallback), enum decode via `nanofix/names.hpp` |
 
 ## Benchmarks
 
