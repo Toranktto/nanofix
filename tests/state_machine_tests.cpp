@@ -273,8 +273,7 @@ TEST(StateMachineCorruption, incomplete_reader_accessors_are_guarded) {
     EXPECT_EQ(r.message_size(), 0u);
     EXPECT_EQ(r.message_end(), r.buffer_begin());
     EXPECT_EQ(r.calculate_check_sum(), 0u);
-    // prefix_end_ is null here; the accessors must return an empty range, not
-    // hand out a null end pointer / huge size.
+    // prefix_end_ is null; accessors must return an empty range.
     EXPECT_EQ(r.prefix_begin(), r.prefix_end());
     EXPECT_EQ(r.prefix_size(), 0u);
     EXPECT_EQ(assert_failure_count(), 8u);  // + prefix begin, end, size

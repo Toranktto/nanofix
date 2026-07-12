@@ -59,10 +59,9 @@ public:
      * \brief Backfill BodyLength and append the CheckSum trailer.
      *
      * `false` (and sticky error) when no `push_back_header` preceded it, a
-     * trailer was already appended (a second call would bury the first `10=`
-     * inside the body as a self-consistent, silently corrupt message), the
-     * body exceeds BodyLength's 6 digits (999999), or the trailer does not
-     * fit. `CalculateChecksum = false` emits a literal `10=000` stub.
+     * trailer was already appended, the body exceeds BodyLength's 6 digits
+     * (999999), or the trailer does not fit. `CalculateChecksum = false`
+     * emits a literal `10=000` stub.
      */
     template <bool CalculateChecksum = true>
     [[nodiscard]] bool push_back_trailer() noexcept {
@@ -473,8 +472,7 @@ public:
             return;
         }
         std::ptrdiff_t const dlen = end - begin;
-        // The length field prints via int: a >INT_MAX span would emit a
-        // wrapped/negative length while memcpy copied the full range.
+        // Length prints via int; >INT_MAX would emit a wrapped length.
         if (dlen > std::numeric_limits<int>::max()) [[unlikely]] {
             error_ = true;
             return;
@@ -506,8 +504,7 @@ private:
     // or silently wrap in itoa_padded_unchecked, so they are rejected up front.
     // Unsigned wrap folds each pair of signed bounds into one compare.
     static bool valid_date(int y, int m, int d) noexcept {
-        // Subtract after the cast: `m - 1` in int is signed-overflow UB at
-        // INT_MIN; unsigned wrap is defined and still rejects.
+        // Subtract after the cast: int `m - 1` is signed-overflow UB at INT_MIN.
         return static_cast<unsigned>(y) <= 9999u && static_cast<unsigned>(m) - 1u <= 11u &&
                static_cast<unsigned>(d) - 1u <= 30u && d <= detail::days_in_month(y, m);
     }
@@ -523,8 +520,7 @@ private:
 
     // Reserve room for `tag=<value_len bytes>\x01` and write the `tag=` prefix,
     // leaving next_ at the value. Returns false (and sets the sticky error_) if
-    // it won't fit, or if the tag is not a positive FIX tag number (a negative
-    // tag would silently emit its unsigned wrap, e.g. -1 -> `4294967295=`).
+    // it won't fit, or on a non-positive tag (would emit its unsigned wrap).
     // value_len is the caller's known max value width.
     NANOFIX_ALWAYS_INLINE bool open_field(int tag, std::ptrdiff_t value_len) noexcept {
         if (error_) [[unlikely]]

@@ -264,10 +264,8 @@ inline bool try_atotimepoint_nano_strict(char const* begin, char const* end, Tim
         begin, hour, minute, second, std::chrono::nanoseconds(nanosecond), tp);
 }
 
-// Every time_point-producing parse is fully validating: a wrong-but-plausible
-// epoch value (non-digit bytes decoded as numbers, hour 99 rolling into the
-// next day) is worse than a reject. The length-only fast tier stays available
-// through the parts-based `as_*` accessors, which never assemble an epoch.
+// Time_point-producing parses are fully validating: a plausible-but-wrong
+// epoch from garbage bytes is worse than a reject.
 template <typename TimePoint>
     requires detail::is_time_point<TimePoint>::value
 inline bool atotimepoint(char const* begin, char const* end, TimePoint& tp) noexcept {
@@ -294,11 +292,9 @@ NANOFIX_ALWAYS_INLINE std::int64_t split_epoch_days(std::int64_t total,
     return days;
 }
 
-// Decompose a time_point into calendar/clock parts. Returns false when the
-// input is outside what the writers can represent — the conversion to the
-// target precision would multiply (source coarser than target) and a huge
-// epoch count would signed-overflow (UB) before any range check could run,
-// so the bound is checked in *source* units (dividing direction, safe).
+// False when out of writable range. The bound is checked in *source* units:
+// casting a coarser duration to the target multiplies, so a huge epoch count
+// would signed-overflow (UB) before any post-cast check could run.
 template <typename TimePoint>
     requires detail::is_time_point<TimePoint>::value
 [[nodiscard]] inline bool timepointtoparts(TimePoint tp,

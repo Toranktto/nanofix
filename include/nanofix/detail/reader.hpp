@@ -70,8 +70,6 @@ public:
     message_reader(char const* begin, char const* end) noexcept
         : message_reader(std::span<char const>(
               begin, end >= begin ? static_cast<std::size_t>(end - begin) : 0)) {
-        // An inverted range would otherwise wrap to a huge size() and every
-        // scan would read far past the real allocation.
         NANOFIX_ASSERT(end >= begin, "message_reader(begin, end): inverted range.");
     }
 

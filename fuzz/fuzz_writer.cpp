@@ -80,14 +80,10 @@ void round_trip(std::span<char const> wire) noexcept {
     if (!r.is_complete() || !r.is_valid())
         return;
     for (auto it = r.begin(); it != r.end(); ++it) {
-        // The round-trip property only holds for canonical `tag=value` fields:
-        // wrapped tags (<= 0) can't be written back; data fields carry embedded
-        // SOH and need their length-tag pairing; a field the tolerant parser
-        // yielded without a `=` on the wire (e.g. a bare `95\x01`) re-serializes
-        // as `95=\x01`, which reframes on the second parse; and a *yielded*
-        // data-length tag (malformed wire put one in content position, e.g.
-        // `95=14` framing a following `93=...`) is skipped by the second
-        // parse's iterator once its own length-field context is gone.
+        // Round-trip holds only for canonical `tag=value` fields: wrapped tags
+        // (<= 0) can't be written back; values with SOH need their length-tag
+        // pairing; a field yielded without `=` (bare `95\x01`) or a yielded
+        // data-length tag reframes on the second parse.
         char const* vb = it->value().begin();
         if (it->tag() <= 0 || nanofix::detail::is_tag_a_data_length(it->tag()) || vb == wire.data() ||
             vb[-1] != '=' || std::memchr(vb, '\x01', it->value().size()) != nullptr)
