@@ -7,9 +7,6 @@ from conan.tools.files import copy, save
 
 
 def _load_version_module():
-    # Version derivation and header rendering live in scripts/version.py
-    # (exported alongside the recipe); load under a unique module name so it
-    # cannot clash with other recipes in the same Conan process.
     path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "scripts", "version.py")
     spec = importlib.util.spec_from_file_location("nanofix_version", path)
@@ -95,6 +92,7 @@ class NanofixConan(ConanFile):
         cmake.configure(variables={
             "NANOFIX_BUILD": "OFF",
             "NANOFIX_BUILD_FIXSPEC_GEN": "ON",
+            "NANOFIX_NATIVE_ARCH": "OFF",
         })
         cmake.build()
 
@@ -120,7 +118,6 @@ class NanofixConan(ConanFile):
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.bindirs = ["bin"]
         self.cpp_info.libdirs = []
-        # x86-64 baseline is AVX2; the headers #error without __AVX2__.
         if self.settings.arch == "x86_64":
             flag = "/arch:AVX2" if self.settings.compiler == "msvc" else "-mavx2"
             self.cpp_info.cxxflags.append(flag)
