@@ -14,8 +14,8 @@ permissions:
 jobs:
   fuzz:
     runs-on: ubuntu-24.04
-    name: ubuntu / clang / libFuzzer (1h)
-    timeout-minutes: 90
+    name: ubuntu / clang / libFuzzer (1h reader + 30m writer)
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4.3.1
       - name: Install tools
@@ -28,8 +28,8 @@ jobs:
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
-      - name: Build fuzz_reader
-        run: cmake --build build/fuzz --target fuzz_reader --parallel
+      - name: Build fuzz harnesses
+        run: cmake --build build/fuzz --target fuzz_reader fuzz_writer --parallel
       - name: Seed corpus
         run: cmake --build build/fuzz --target fuzz_dataset
       - name: Restore fuzz corpus
@@ -39,13 +39,17 @@ jobs:
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-
-      - name: Run libFuzzer (1h, halt on crash)
-        env:
-          NANOFIX_FUZZ_MAX_TIME: 3600
+      - name: Run libFuzzer (1h reader, 30m writer, halt on crash)
         run: |
           mkdir -p fuzz-corpus
           build/fuzz/fuzz_reader \
-            -max_total_time=${NANOFIX_FUZZ_MAX_TIME} \
+            -max_total_time=3600 \
+            -timeout=10 \
+            -rss_limit_mb=2048 \
+            -dict=fuzz/fix.dict \
+            fuzz-corpus build/fuzz/dataset
+          build/fuzz/fuzz_writer \
+            -max_total_time=1800 \
             -timeout=10 \
             -rss_limit_mb=2048 \
             -dict=fuzz/fix.dict \

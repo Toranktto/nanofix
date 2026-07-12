@@ -32,16 +32,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
     list(APPEND _fuzz_flags -mavx2)
 endif()
 
-add_executable(fuzz_reader fuzz_reader.cpp)
-target_include_directories(fuzz_reader PRIVATE
-    "${NANOFIX_VERSION_INCLUDE_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../include")
-
 # Fail fast on a tripped NANOFIX_ASSERT so the sanitizer runtime reports it as a
 # crash (a nanofix invariant violated on fuzzer input is a bug to surface).
-target_compile_definitions(fuzz_reader PRIVATE NANOFIX_ASSERT_FAILFAST)
-target_compile_options(fuzz_reader PRIVATE ${_fuzz_flags})
-target_link_options(fuzz_reader PRIVATE ${_fuzz_flags})
+foreach(_harness fuzz_reader fuzz_writer)
+    add_executable(${_harness} ${_harness}.cpp)
+    target_include_directories(${_harness} PRIVATE
+        "${NANOFIX_VERSION_INCLUDE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+    target_compile_definitions(${_harness} PRIVATE NANOFIX_ASSERT_FAILFAST)
+    target_compile_options(${_harness} PRIVATE ${_fuzz_flags})
+    target_link_options(${_harness} PRIVATE ${_fuzz_flags})
+endforeach()
 
 set(_dataset_dir "${CMAKE_CURRENT_BINARY_DIR}/dataset")
 set(_dataset_stamp "${CMAKE_CURRENT_BINARY_DIR}/dataset.stamp")
@@ -67,6 +68,13 @@ add_custom_target(fuzz
             -dict=${CMAKE_CURRENT_SOURCE_DIR}/fix.dict
             -max_total_time=$<IF:$<BOOL:${NANOFIX_FUZZ_MAX_TIME}>,${NANOFIX_FUZZ_MAX_TIME},60>
             ${_dataset_dir}
-    DEPENDS fuzz_reader fuzz_dataset
+    COMMAND ${CMAKE_COMMAND} -E echo "Running fuzz_writer"
+    COMMAND $<TARGET_FILE:fuzz_writer>
+            -print_final_stats=1
+            -timeout=10
+            -dict=${CMAKE_CURRENT_SOURCE_DIR}/fix.dict
+            -max_total_time=$<IF:$<BOOL:${NANOFIX_FUZZ_MAX_TIME}>,${NANOFIX_FUZZ_MAX_TIME},60>
+            ${_dataset_dir}
+    DEPENDS fuzz_reader fuzz_writer fuzz_dataset
     USES_TERMINAL
     VERBATIM)

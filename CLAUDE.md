@@ -352,6 +352,12 @@ pairs, group count tags, timestamp formats, minimum frames). Wired via
 `-dict=...` on the fuzz target. Extend it when adding fuzz coverage to
 a new tag family.
 
+`fuzz/fuzz_writer.cpp` is the write-side harness: a parse → re-serialize →
+re-parse round-trip oracle (aborts on any (tag, value) stream divergence) plus
+every validating `push_back_*` driven with arbitrary fuzz-derived values — a
+writer-accepted message must frame valid with a matching checksum. The `fuzz`
+target and CI run both harnesses.
+
 `fuzz/fuzz_reader.cpp` exercises 18 group types (NoMDEntries, NoPartyIDs,
 NoOrders, NoLegs, NoSides, NoTrades, NoAllocs, NoContraBrokers,
 NoMiscFees, NoRelatedSym, NoQuoteEntries, NoExecs, NoFills, NoEvents,

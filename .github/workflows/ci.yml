@@ -275,8 +275,8 @@ jobs:
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
-      - name: Build fuzz_reader
-        run: cmake --build build/fuzz --target fuzz_reader --parallel
+      - name: Build fuzz harnesses
+        run: cmake --build build/fuzz --target fuzz_reader fuzz_writer --parallel
       - name: Seed corpus
         run: cmake --build build/fuzz --target fuzz_dataset
       - name: Restore fuzz corpus
@@ -286,17 +286,19 @@ jobs:
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-
-      - name: Run libFuzzer (60s, halt on crash)
+      - name: Run libFuzzer (60s each, halt on crash)
         env:
           NANOFIX_FUZZ_MAX_TIME: 60
         run: |
           mkdir -p fuzz-corpus
-          build/fuzz/fuzz_reader \
-            -max_total_time=${NANOFIX_FUZZ_MAX_TIME} \
-            -timeout=10 \
-            -rss_limit_mb=2048 \
-            -dict=fuzz/fix.dict \
-            fuzz-corpus build/fuzz/dataset
+          for harness in fuzz_reader fuzz_writer; do
+            build/fuzz/${harness} \
+              -max_total_time=${NANOFIX_FUZZ_MAX_TIME} \
+              -timeout=10 \
+              -rss_limit_mb=2048 \
+              -dict=fuzz/fix.dict \
+              fuzz-corpus build/fuzz/dataset
+          done
       - name: Upload crashes (if any)
         if: failure()
         uses: actions/upload-artifact@v4.6.2

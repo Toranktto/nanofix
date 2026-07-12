@@ -345,14 +345,16 @@ of that delta flips between runs. Supported: GCC, Clang, AppleClang, MSVC
 
 ## Fuzzing
 
-A standalone CMake project under [fuzz/](fuzz/) builds a libFuzzer + ASan +
-UBSan binary over `message_reader`, `for_each_message`, repeating groups,
-`build_field_index`, the typed `find(tag::X)` facade, and the full `try_as_*`
-family including the validating chrono tier, seeded from
-[tests/data/](tests/data/) and a FIX-token dictionary
-([fuzz/fix.dict](fuzz/fix.dict)). CI runs a 60 s smoke per push and a 1 h
-nightly campaign (`fuzz-nightly.yml`), both feeding one rolling corpus cache.
-Replay a crash with `build/fuzz/fuzz_reader ./crash-<hash>`.
+A standalone CMake project under [fuzz/](fuzz/) builds two libFuzzer + ASan +
+UBSan harnesses: `fuzz_reader` over `message_reader`, `for_each_message`,
+repeating groups, `build_field_index`, the typed `find(tag::X)` facade, and
+the full `try_as_*` family including the validating chrono tier; and
+`fuzz_writer`, a parse → re-serialize → re-parse round-trip oracle plus the
+validating `push_back_*` writers driven with arbitrary values. Both are seeded
+from [tests/data/](tests/data/) and a FIX-token dictionary
+([fuzz/fix.dict](fuzz/fix.dict)). CI runs 60 s smokes per push and a nightly
+campaign (`fuzz-nightly.yml`), all feeding one rolling corpus cache. Replay a
+crash with `build/fuzz/fuzz_reader ./crash-<hash>` (or `fuzz_writer`).
 
 ## Thread safety and errors
 
