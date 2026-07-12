@@ -342,9 +342,10 @@ written next to the working directory; replay with
 `build/fuzz/fuzz_reader ./crash-<hash>`.
 
 For a long campaign, `scripts/gcloud_fuzz.py --project <p> [--time 3600]`
-runs fuzz_reader on a fresh GCE VM with one job per vCPU, prints per-job
-coverage/stats to stdout, fetches any artifacts to `./fuzz-artifacts/`
-(exit non-zero when there are any), and deletes the VM.
+runs both harnesses (`--harness` to pick) on a fresh GCE VM with one job per
+vCPU, `--time` each, prints per-job coverage/stats to stdout, fetches any
+artifacts to `./fuzz-artifacts/<harness>/` (exit non-zero when there are
+any), and deletes the VM.
 
 `fuzz/fix.dict` is a libFuzzer dictionary of FIX-shaped tokens (SOH,
 header/trailer tag prefixes, BeginString variants, MsgType, data-length

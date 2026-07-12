@@ -3,18 +3,21 @@
 
 Creates the VM, uploads the local working tree (gitignore respected,
 uncommitted changes included), builds fuzz/ with clang (ASan+UBSan+fuzzer,
-AVX2 on x86-64), runs fuzz_reader with N parallel jobs for --time seconds,
+AVX2 on x86-64), runs each harness (--harness, default fuzz_reader and
+fuzz_writer, sequentially) with N parallel jobs for --time seconds each,
 prints per-job coverage and final stats to stdout (build/progress goes to
 stderr), downloads any crash artifacts, and deletes the VM — also on
 failure; --keep to skip deletion for debugging.
 
 Exits non-zero when the campaign produced artifacts (crash/oom/timeout);
-they land in ./fuzz-artifacts/ for local replay:
-build/fuzz/fuzz_reader ./fuzz-artifacts/<file> (see CLAUDE.md ## Fuzzing).
+they land in ./fuzz-artifacts/<harness>/ for local replay:
+build/fuzz/<harness> ./fuzz-artifacts/<harness>/<file> (see CLAUDE.md
+## Fuzzing).
 
   scripts/gcloud_fuzz.py --project <gcp-project> \
       [--zone europe-west4-a] [--machine-type e2-highcpu-8] \
-      [--time 3600] [--jobs <vCPUs>] [--spot] [--keep]
+      [--time 3600] [--jobs <vCPUs>] [--harness fuzz_reader,fuzz_writer] \
+      [--spot] [--keep]
 """
 
 import argparse
@@ -39,30 +42,33 @@ git init -q && git add -A -f && git -c user.email=fuzz@local -c user.name=fuzz c
 
 cmake -S fuzz -B build/fuzz -G Ninja -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo > /dev/null
-cmake --build build/fuzz --target fuzz_reader fuzz_dataset >&2
+cmake --build build/fuzz --target {harnesses} fuzz_dataset >&2
 
 cd build/fuzz
-mkdir -p artifacts
 jobs={jobs}
 [ "$jobs" -gt 0 ] || jobs=$(nproc)
-set +e
-./fuzz_reader -print_final_stats=1 -timeout=10 \
-    -dict=../../fuzz/fix.dict \
-    -max_total_time={time} -jobs="$jobs" -workers="$jobs" \
-    -artifact_prefix=artifacts/ dataset >&2
-rc=$?
-set -e
+for harness in {harnesses}; do
+    mkdir -p "artifacts/$harness"
+    rm -f fuzz-*.log
+    set +e
+    "./$harness" -print_final_stats=1 -timeout=10 \
+        -dict=../../fuzz/fix.dict \
+        -max_total_time={time} -jobs="$jobs" -workers="$jobs" \
+        -artifact_prefix="artifacts/$harness/" dataset >&2
+    rc=$?
+    set -e
 
-echo "== fuzz_reader: max_total_time={time}s jobs=$jobs exit=$rc =="
-for log in fuzz-*.log; do
-    [ -f "$log" ] || continue
-    echo "-- $log"
-    grep -Eo 'cov: [0-9]+ ft: [0-9]+' "$log" | tail -1 || true
-    grep '^stat::' "$log" || true
+    echo "== $harness: max_total_time={time}s jobs=$jobs exit=$rc =="
+    for log in fuzz-*.log; do
+        [ -f "$log" ] || continue
+        echo "-- $log"
+        grep -Eo 'cov: [0-9]+ ft: [0-9]+' "$log" | tail -1 || true
+        grep '^stat::' "$log" || true
+    done
 done
-n_artifacts=$(ls artifacts | wc -l)
+n_artifacts=$(find artifacts -type f | wc -l)
 echo "artifacts: $n_artifacts"
-ls artifacts || true
+find artifacts -type f || true
 tar czf ~/artifacts.tar.gz artifacts
 """
 
@@ -103,12 +109,22 @@ def main():
                     help="max_total_time per fuzz job, seconds")
     ap.add_argument("--jobs", type=int, default=0,
                     help="parallel fuzz jobs (0 = one per vCPU)")
+    ap.add_argument("--harness", default="fuzz_reader,fuzz_writer",
+                    help="comma-separated harnesses to run sequentially, "
+                         "--time each")
     ap.add_argument("--spot", action="store_true",
                     help="SPOT provisioning (cheaper, may be preempted mid-run)")
     ap.add_argument("--keep", action="store_true",
                     help="do not delete the VM afterwards")
     ap.add_argument("--ssh-timeout", type=int, default=300)
     args = ap.parse_args()
+
+    harnesses = [h.strip() for h in args.harness.split(",") if h.strip()]
+    known = {"fuzz_reader", "fuzz_writer"}
+    unknown = set(harnesses) - known
+    if not harnesses or unknown:
+        ap.error(f"--harness must name harnesses from {sorted(known)}, "
+                 f"got: {args.harness!r}")
 
     base = ["--project", args.project, "--zone", args.zone]
     name = "nanofix-fuzz-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -139,10 +155,12 @@ def main():
             gcloud(["scp", str(tarball), f"{name}:~/nanofix.tar.gz"], base,
                    stdout=sys.stderr)
 
-            script = REMOTE_SCRIPT.format(time=args.time, jobs=args.jobs)
+            script = REMOTE_SCRIPT.format(time=args.time, jobs=args.jobs,
+                                          harnesses=" ".join(harnesses))
             # generous margin over the fuzz budget for apt + build + summary
             fuzz = gcloud(["ssh", name, "--command", "bash -s"], base,
-                          input=script.encode(), timeout=args.time + 1800,
+                          input=script.encode(),
+                          timeout=args.time * len(harnesses) + 1800,
                           stdout=subprocess.PIPE)
             out = fuzz.stdout.decode()
             sys.stdout.write(out)
@@ -156,8 +174,8 @@ def main():
                        stdout=sys.stderr)
                 run(["tar", "xzf", f"{tmp}/artifacts.tar.gz"])
                 run(["mv", "artifacts", "fuzz-artifacts"])
-                log(f"{crashes} artifact(s) -> ./fuzz-artifacts/ "
-                    "(replay: build/fuzz/fuzz_reader ./fuzz-artifacts/<file>)")
+                log(f"{crashes} artifact(s) -> ./fuzz-artifacts/ (replay: "
+                    "build/fuzz/<harness> ./fuzz-artifacts/<harness>/<file>)")
         finally:
             if args.keep:
                 log(f"keeping VM {name} ({args.zone}); delete it yourself:")
