@@ -1,5 +1,3 @@
-// SIMD primitives, timestamp parse, and the single-message read/scan paths.
-
 #include <benchmark/benchmark.h>
 
 #include <nanofix.hpp>

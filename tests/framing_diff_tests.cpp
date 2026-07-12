@@ -1,5 +1,3 @@
-// Differential gate: bulk-SIMD build_field_index must match a per-field reference.
-
 #include <gtest/gtest.h>
 
 #include <nanofix.hpp>

@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.20)
 
 project(nanofix-fuzz LANGUAGES CXX)
 
-# Standalone project: generate detail/version.hpp into this build tree
-# (nanofix.hpp includes it; the generated dir shadows the committed stub).
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nanofix-version.cmake)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -38,6 +36,7 @@ add_executable(fuzz_reader fuzz_reader.cpp)
 target_include_directories(fuzz_reader PRIVATE
     "${NANOFIX_VERSION_INCLUDE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+
 # Fail fast on a tripped NANOFIX_ASSERT so the sanitizer runtime reports it as a
 # crash (a nanofix invariant violated on fuzzer input is a bug to surface).
 target_compile_definitions(fuzz_reader PRIVATE NANOFIX_ASSERT_FAILFAST)

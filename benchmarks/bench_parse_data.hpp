@@ -1,11 +1,5 @@
 #pragma once
 
-// Dataset loading, tag sets, and templates shared by bench_parse.cpp and
-// bench_parse_hot_iter.cpp. The hot iterator sweeps live in their own non-LTO
-// TU so the indexed benches' always-inline AVX2 bodies don't exhaust GCC's
-// inline-unit-growth budget and pessimize them (~18-19% on
-// BM_Parse_{Sequential,Random}_Iter; see benchmarks/CMakeLists.txt).
-
 #include <benchmark/benchmark.h>
 
 #include <nanofix.hpp>

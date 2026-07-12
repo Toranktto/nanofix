@@ -1,6 +1,3 @@
-// Built with -DNANOFIX_ASSERT_FAILFAST (see CMakeLists): a tripped NANOFIX_ASSERT
-// aborts rather than counting and producing bogus timings.
-
 #include <algorithm>
 #include <array>
 #include <chrono>

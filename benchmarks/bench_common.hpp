@@ -1,7 +1,5 @@
 #pragma once
 
-// Message builders and per-group register hooks shared by the bench_*.cpp files.
-
 #include <nanofix.hpp>
 
 #include <chrono>
@@ -24,11 +22,6 @@ namespace nanofix_bench {
 
 inline constexpr std::size_t kBufSize = 1 << 13;
 
-// Per-message probe for the *_TailLatency benches: RDTSCP on x86-64 (~5-10
-// cycles, invariant TSC), steady_clock elsewhere (~20-30 ns on M4). Samples
-// are raw ticks; convert once at the end with to_ns(). The upstream
-// differential suite carries a copy — keep the two byte-identical so the
-// probe cost cancels out of the comparison.
 namespace latency_probe {
 
 #if NANOFIX_BENCH_HAS_RDTSC

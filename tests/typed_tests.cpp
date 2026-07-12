@@ -1,6 +1,3 @@
-// Category gating on typed_value, and typed find()/find_with_hint across the
-// access paths.
-
 #include <gtest/gtest.h>
 
 #include <nanofix.hpp>

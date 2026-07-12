@@ -1,5 +1,3 @@
-// Round-trip and fixture-classification tests against bundled sample data.
-
 #include <gtest/gtest.h>
 
 #include <nanofix.hpp>
