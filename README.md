@@ -352,9 +352,9 @@ the full `try_as_*` family including the validating chrono tier; and
 `fuzz_writer`, a parse → re-serialize → re-parse round-trip oracle plus the
 validating `push_back_*` writers driven with arbitrary values. Both are seeded
 from [tests/data/](tests/data/) and a FIX-token dictionary
-([fuzz/fix.dict](fuzz/fix.dict)). CI runs 60 s smokes per push and a nightly
-campaign (`fuzz-nightly.yml`), all feeding one rolling corpus cache. Replay a
-crash with `build/fuzz/fuzz_reader ./crash-<hash>` (or `fuzz_writer`).
+([fuzz/fix.dict](fuzz/fix.dict)). CI runs 60 s smokes per push, feeding one
+rolling corpus cache; long campaigns run via `scripts/gcloud_fuzz.py`. Replay
+a crash with `build/fuzz/fuzz_reader ./crash-<hash>` (or `fuzz_writer`).
 
 ## Thread safety and errors
 
