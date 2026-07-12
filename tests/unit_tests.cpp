@@ -2181,16 +2181,14 @@ TEST(NanofixTest, writer_rejects_non_positive_tag) {
 }
 
 #ifndef NANOFIX_ASSERT_FAILFAST
-TEST(NanofixTest, inverted_range_ctors_are_guarded) {
+TEST(NanofixTest, inverted_range_writer_ctor_is_guarded) {
+    // Reader's (begin, end) ctor is deliberately unguarded (hot path, ~20%
+    // measured cost — see the ctor doc); the writer ctor is cold and clamps.
     char buf[64] = {};
 
     reset_assert_failure_count();
-    message_reader r(buf + 32, buf);  // end < begin: clamps to empty, asserts
+    message_writer w(buf + 32, buf);  // end < begin: clamps to empty, asserts
     EXPECT_EQ(assert_failure_count(), 1u);
-    EXPECT_FALSE(r.is_complete());
-
-    message_writer w(buf + 32, buf);
-    EXPECT_EQ(assert_failure_count(), 2u);
     EXPECT_EQ(w.buffer_size(), 0u);
     w.push_back_header("FIX.4.2");
     EXPECT_FALSE(w.ok());

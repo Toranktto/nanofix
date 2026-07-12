@@ -67,11 +67,11 @@ public:
     message_reader(char const* buffer, std::size_t size) noexcept
         : message_reader(std::span<char const>(buffer, size)) {}
 
+    /// \pre `end >= begin`. Unguarded: this ctor sits on the hot per-message
+    /// path (`next_message_reader`), where a clamp+assert measured ~20% on the
+    /// iterator read benches. An inverted range wraps to a huge size().
     message_reader(char const* begin, char const* end) noexcept
-        : message_reader(std::span<char const>(
-              begin, end >= begin ? static_cast<std::size_t>(end - begin) : 0)) {
-        NANOFIX_ASSERT(end >= begin, "message_reader(begin, end): inverted range.");
-    }
+        : message_reader(std::span<char const>(begin, static_cast<std::size_t>(end - begin))) {}
 
     message_reader(message_reader const&) noexcept = default;
     message_reader& operator=(message_reader const&) noexcept = default;
