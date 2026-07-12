@@ -12,17 +12,19 @@ set(NANOFIX_BENCH_MIN_TIME "1s"
 add_executable(nanofix_benchmarks
     bench_parse.cpp
     bench_parse_hot_iter.cpp
+    bench_parse_hot_indexed.cpp
     bench_write.cpp
     bench_primitives.cpp
 )
-# The overview-table iterator sweeps live in a tiny TU kept out of LTO:
-# merged with the indexed benches' always-inline AVX2 bodies, GCC's
-# inline-unit-growth budget runs out and the iterator loops pessimize
-# (~18-19% on BM_Parse_{Sequential,Random}_Iter). A native object keeps its
-# own budget; everything else stays LTO.
+# The overview-table iterator and indexed sweeps each live in a tiny TU kept
+# out of LTO: merged into the LTO blob, GCC's inline-unit-growth budget and
+# whole-binary layout couple them to unrelated code — the iterator loops
+# pessimized ~18-19% next to the indexed AVX2 bodies, and the indexed sweeps
+# drifted ~2-3% on header changes they never execute. A native object keeps
+# its own budget and layout; everything else stays LTO.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set_source_files_properties(bench_parse_hot_iter.cpp PROPERTIES
-        COMPILE_OPTIONS "-fno-lto")
+    set_source_files_properties(bench_parse_hot_iter.cpp bench_parse_hot_indexed.cpp
+        PROPERTIES COMPILE_OPTIONS "-fno-lto")
 endif()
 target_link_libraries(nanofix_benchmarks PRIVATE
     nanofix
@@ -36,6 +38,13 @@ target_compile_definitions(nanofix_benchmarks PRIVATE
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
     include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nanofix-jcc.cmake)
     nanofix_add_jcc_mitigation(nanofix_benchmarks)
+endif()
+# Fixed 32B function/loop alignment damps the code-layout lottery between
+# binaries built from slightly different headers (A/B comparability); the
+# upstream suite carries the same flags.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(nanofix_benchmarks PRIVATE
+        -falign-functions=32 -falign-loops=32)
 endif()
 
 add_custom_target(bench_data

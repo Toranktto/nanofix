@@ -13,6 +13,7 @@
 
 namespace nanofix_bench {
 void register_parse_hot_iter();
+void register_parse_hot_indexed();
 }  // namespace nanofix_bench
 
 namespace {
@@ -349,39 +350,6 @@ void BM_Parse_GroupAccess_Manual(benchmark::State& state, Dataset const* ds) {
     state.SetItemsProcessed(static_cast<int64_t>(total_messages));
 }
 
-// Hint hoisted: lookup order matters. The non-Hint variant resets per call.
-template <int const* Tags, std::size_t N>
-void BM_Parse_FindTagsIndexed_Hint(benchmark::State& state, Dataset const* ds) {
-    char const* begin = ds->data.data();
-    char const* end = begin + ds->data.size();
-    nanofix::field_index_buffer<kFieldIndexCapacity> idx_buffer;
-    std::size_t total_bytes = 0;
-    std::size_t total_messages = 0;
-    for (auto _ : state) {
-        std::size_t messages = 0;
-        nanofix::message_reader r(begin, end);
-        for (; r.is_complete(); r = r.next_message_reader()) {
-            if (!r.is_valid())
-                continue;
-            ++messages;
-            auto idx = nanofix::build_field_index(r, idx_buffer);
-            std::size_t h = 0;
-            for (std::size_t k = 0; k < N; ++k) {
-                auto v = idx.find_with_hint(Tags[k], h);
-                benchmark::DoNotOptimize(v);
-            }
-            if (idx.truncated()) [[unlikely]] {
-                state.SkipWithError("index truncated; bump kFieldIndexCapacity");
-                return;
-            }
-        }
-        total_bytes += ds->data.size();
-        total_messages += messages;
-    }
-    state.SetBytesProcessed(static_cast<int64_t>(total_bytes));
-    state.SetItemsProcessed(static_cast<int64_t>(total_messages));
-}
-
 template <int const* Tags, std::size_t N>
 void BM_Parse_FindTagsIndexed(benchmark::State& state, Dataset const* ds) {
     char const* begin = ds->data.data();
@@ -576,15 +544,6 @@ void register_parse() {
             ("BM_Parse_GroupAccess_Manual/" + name).c_str(), BM_Parse_GroupAccess_Manual, &ds);
 
         benchmark::RegisterBenchmark(
-            ("BM_Parse_Sequential_Indexed/" + name).c_str(),
-            BM_Parse_FindTagsIndexed_Hint<kSeqOrderTags, std::size(kSeqOrderTags)>,
-            &ds);
-        benchmark::RegisterBenchmark(
-            ("BM_Parse_Random_Indexed/" + name).c_str(),
-            BM_Parse_FindTagsIndexed_Hint<kRandOrderTags, std::size(kRandOrderTags)>,
-            &ds);
-
-        benchmark::RegisterBenchmark(
             ("BM_Parse_TailLatency_Sequential_Iter/" + name).c_str(),
             BM_Parse_TailLatency<kSeqOrderTags, std::size(kSeqOrderTags), false>,
             &ds);
@@ -632,6 +591,7 @@ int main(int argc, char** argv) {
     nanofix_bench::register_primitives();
     register_parse();
     nanofix_bench::register_parse_hot_iter();
+    nanofix_bench::register_parse_hot_indexed();
     benchmark::Initialize(&argc, argv);
     if (benchmark::ReportUnrecognizedArguments(argc, argv))
         return 1;

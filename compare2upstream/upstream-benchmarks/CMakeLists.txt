@@ -70,3 +70,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
     include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/nanofix-jcc.cmake)
     nanofix_add_jcc_mitigation(upstream_benchmarks)
 endif()
+# Same 32B alignment as the fork suite (layout-lottery damping).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(upstream_benchmarks PRIVATE
+        -falign-functions=32 -falign-loops=32)
+endif()
