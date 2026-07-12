@@ -13,8 +13,7 @@ hot scan, checksum, and indexed tag lookup; the tail percentiles are in the
 
 Tags carry their FIX type at compile time. `find(tag::Price)` returns a
 `typed_value` whose accessors are gated to the field's category, so reading a
-`String` field as an integer is a compile error, not a runtime surprise — full
-type safety at zero runtime cost.
+`String` field as an integer is a compile error, not a runtime surprise.
 
 Wire format only: no session layer, no transport. On top of upstream it adds
 indexed and repeating-group reads, drops Boost (`chrono` + epoch ints), and
@@ -67,8 +66,8 @@ stable venue justifies it. Each also works on one repeating-group entry.
 Every `tag::X` is a **typed handle**. `find(tag::X)` / `find_with_hint(tag::X,
 it)` return a `typed_value` exposing only the accessors valid for that field's
 FIX type — `try_as_decimal` for `Price`, `as_string_view` for `Symbol`; the
-wrong one is a compile error. `bytes()` / `as_string_view()` /
-`as_char_unchecked()` stay available on any typed value, and `.value()` drops to
+wrong one is a compile error. `bytes()` / `as_string_view()` stay available on
+any typed value, and `.value()` drops to
 the raw `field_value` (ungated `try_*` / `as_*_unchecked`, the escape hatch for
 off-spec data). The `tag::` namespace needs no extra header and costs nothing at
 runtime when the tag is known at compile time. `tag::X` also converts to its
@@ -320,9 +319,10 @@ over the same `const` buffer are safe to use concurrently across threads
 
 Every push runs the full gate: build + tests on Linux (GCC, Clang), macOS
 (AppleClang) and Windows (MSVC, clang-cl); ASan+UBSan and TSan suites; a 60 s
-libFuzzer smoke over the reader; clang-format and clang-tidy (warnings are
-errors); a warning-free Doxygen build; and both example projects built as
-downstream Conan consumers. The test suite covers malformed-input and
+libFuzzer smoke over the reader (dictionary-driven, rolling corpus cache); a
+scalar (`NANOFIX_DISABLE_SIMD`) build and test run; clang-format and
+clang-tidy (warnings are errors); a warning-free Doxygen build; and both
+example projects built as downstream Conan consumers. The test suite covers malformed-input and
 truncation fixtures, a characterization diff holding the SIMD bulk framing
 byte-identical to a per-field reference parser, and concurrent-reader
 threading tests.
@@ -341,8 +341,10 @@ Deployment notes, roughly in priority order:
   gate.
 - **Default to `try_as_*` off the wire.** The `*_unchecked` readers are for
   externally validated fields; on garbage their output is undefined
-  (documented per method). Time accessors validate structure and length, not
-  every digit — range-check business-critical values after parsing.
+  (documented per method). The named `as_*` time accessors validate structure
+  and length, not every digit — read time fields with
+  `try_as<std::chrono::...>` for full validation, or range-check after
+  parsing.
 - **Size `field_index_buffer<N>` for the venue.** Overflow is all-or-nothing:
   `truncated()` yields an empty index and `with_fields` falls back to the
   iterator — a tail-latency cliff, not an error. Monitor `truncated()` in

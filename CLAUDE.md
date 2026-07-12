@@ -21,7 +21,7 @@ Nothing else. No transport, no session layer, no business logic.
    programmer-error invariants use `NANOFIX_ASSERT` (see
    `NANOFIX_ASSERT` below).
 4. **Header-only.** Hand-written code lives in `include/nanofix/detail/*.hpp`
-   (split by area: `config`, `diagnostics`, `simd`, `numeric`, `writer`,
+   (split by area: `config`, `diagnostics`, `simd`, `numeric`, `time`, `writer`,
    `value_iter`, `reader`, `index`, `typed`); `include/nanofix.hpp` is the umbrella that
    includes them. Each internal header pulls its own dependencies, so umbrella
    include order does not matter. The generated `include/nanofix/detail/fields.hpp`
@@ -147,7 +147,7 @@ vector path at the iterator-increment scan regressed `BM_ReadMessageScan`
 through `find_all_soh`.
 
 AVX2 is a hard baseline, enforced globally, not per function: on x86-64
-`config.hpp` `#error`s unless `__AVX2__` is defined (or
+`simd.hpp` `#error`s unless `__AVX2__` is defined (or
 `NANOFIX_DISABLE_SIMD=1`), and the build propagates `-mavx2` /
 `/arch:AVX2` itself — the `nanofix` CMake target (build interface),
 `nanofix-config.cmake.in` (installed consumers, applied at their
@@ -164,7 +164,8 @@ When adding a SIMD path: define `*_scalar`, `*_avx2`, `*_neon`, all
 `NANOFIX_ALWAYS_INLINE`, dispatch from a single `NANOFIX_ALWAYS_INLINE`
 wrapper via `#if/#elif/#else`, always provide
 scalar fallback. `NANOFIX_DISABLE_SIMD=1` collapses everything to scalar
-— keep that path compiling on every change.
+— keep that path compiling on every change; CI's `scalar` job builds and
+tests it on every push.
 
 ## `is_known_tag(int)`
 
@@ -198,9 +199,16 @@ Append venue XML to `fixspec-gen` input to union the bitmap.
   length); the unchecked form is first-byte `== 'Y'`.
 - `field_value::try_as<T>(T&)` / `as_unchecked<T>()`: `if constexpr` facades
   over the named methods. `T` is an integral, `bool` (matched before integral →
-  Boolean-decodes, not `0`/`1`), `char`, `std::string_view`, or
+  Boolean-decodes, not `0`/`1`), `char`, `std::string_view`,
   `decimal_parts<Int>` (plain `{mantissa, exponent}` carrier, `Int` defaults
-  `int64_t`, no operators) routing to `try_as_decimal`. No `try_as_fixed`:
+  `int64_t`, no operators) routing to `try_as_decimal`, or a chrono type:
+  `std::chrono::time_point` (UTCTimestamp), `duration` (UTCTimeOnly),
+  `year_month_day` (date), `year_month` (MonthYear). Chrono types route to the
+  named `try_as_timestamp` / `try_as_timeonly` / `try_as_date` /
+  `try_as_monthyear` — fully validating (digits/separators/ranges — stricter
+  than the length-only named `as_*`); sub-milli targets read the nano wire
+  formats, milli-or-coarser targets reject sub-ms wire instead of truncating.
+  No `try_as_fixed`:
   decimal→fixed-point ticks is consumer/venue knowledge (no FIX wire type is
   fixed-point), so it lives in the caller.
 
@@ -208,18 +216,23 @@ Append venue XML to `fixspec-gen` input to union the bitmap.
 
 Each `tag::X` is a `field_tag<Tag, fix_type>` (in `detail/typed.hpp`). It carries
 the field's FIX type *category* (`decimal` / `integer` / `string` / `character` /
-`timestamp` / `unknown`) and converts to its `int` number via a `constexpr
+`timestamp` / `timeonly` / `date` / `monthyear` / `unknown`) and converts to its `int` number via a `constexpr
 operator int()`, so writer / comparison / `group()` call sites take it unchanged.
 
 `find(tag::X)` and `find_with_hint(tag::X, cur)` on `message_reader`,
 `group_entry`, `indexed_message`, `indexed_fields`, `iter_fields` return a
 `typed_value<Type>`:
 
-- Universal (any category): `bytes()`, `as_string_view()`, `as_char_unchecked()`,
+- Universal (any category): `bytes()`, `as_string_view()`,
   `empty()`, `value()`, `explicit operator bool` (truthy = found).
 - Category-gated (compile error otherwise): `try_as_int`, `try_as_decimal`,
   `try_as_char` / `try_as_bool` (`character` — single byte; bool is `'Y'`/`'N'`),
-  `as_date` / `as_epoch_*`. Wrong-type access does not compile.
+  `as_timestamp[_nano]` / `as_epoch_*` / `try_as_timestamp` (`timestamp`),
+  `as_timeonly[_nano]` / `try_as_timeonly` (`timeonly`), `as_date` /
+  `try_as_date` (`date` — LocalMktDate/UTCDateOnly), `as_monthyear` /
+  `try_as_monthyear` (`monthyear`). The `try_as_*` chrono forms are the fully
+  validating tier (digits/separators/ranges); the `as_*` forms validate length
+  only. Wrong-type access does not compile.
 - No `_unchecked` on `typed_value`: reach the ungated, any-tag escape hatch via
   `.value()` (returns the raw `field_value`, which keeps the full ungated API).
 
@@ -550,7 +563,7 @@ not finished.
 
 ```sh
 scripts/format.sh        # rewrite in place
-scripts/format-check.sh  # dry-run, exits non-zero on diff (CI)
+scripts/format_check.sh  # dry-run, exits non-zero on diff (CI)
 ```
 
 Both honor `.clang-format-ignore`. `_sources.sh` enumerates the file
@@ -568,7 +581,7 @@ scripts/lint.sh build/build/Release   # build dir holding compile_commands.json
 `.clang-tidy` runs bugprone/performance/portability + the static analyzer
 as errors (`WarningsAsErrors: '*'`). `HeaderFilterRegex` scopes header
 diagnostics to `include/nanofix.hpp` and the hand-written `detail/` headers,
-enumerated by name (`config|diagnostics|simd|numeric|writer|value_iter|reader|index|typed`)
+enumerated by name (`config|diagnostics|simd|numeric|time|writer|value_iter|reader|index|typed`)
 so the generated `detail/fields.hpp` and `nanofix/names.hpp` are not linted —
 clang-tidy's regex has no negative lookahead, so the allow-list is explicit. The script lints every `.cpp` under
 `utils/`, `tests/`, and `benchmarks/`; checks that fight the design
@@ -589,7 +602,8 @@ to make it pass without understanding why it failed.
 difference from upstream `jamesdbrock/hffix` (exceptions and `std::string`
 removed, Boost dropped, checked/unchecked parse split, indexed reads). Any
 public API change updates it alongside `tests/unit_tests.cpp` — new surface in
-the "Added" section, removals/renames where upstream had a counterpart.
+"Smaller changes" / "Later additions in this fork", removals/renames where
+upstream had a counterpart.
 
 ## Style
 

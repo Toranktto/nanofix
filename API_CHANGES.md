@@ -80,8 +80,9 @@ carrier (`Int` defaults to `int64_t`) that routes to `try_as_decimal` /
 For wire data prefer the validating reads: `try_as_char` rejects any length
 other than one (a FIX `char` is one byte), `try_as_bool` accepts only
 `'Y'`/`'N'`. The `as_*_unchecked` forms read blind — UB on empty, silent
-truncation on a multi-byte `char`. On `typed_value`, `try_as_char` /
-`try_as_bool` are gated to the `character` category.
+truncation on a multi-byte `char` — and live only on the raw `field_value`
+tier. On `typed_value`, `try_as_char` / `try_as_bool` are gated to the
+`character` category.
 
 ```cpp
 std::uint32_t seq = 0;
@@ -137,8 +138,8 @@ for (auto const& m : nanofix::messages(wire)) {
 Index/iterator on a group entry: `build_field_index(entry, buf)` for many
 fields, `find_with_hint` for a few. `with_fields()`'s message-level
 index↔iterator dispatch has no entry overload, so branch on `truncated()`
-yourself (`group_entry::find_with_hint(tag, it)` returns a bool and advances
-`it`):
+yourself (`group_entry::find_with_hint(tag, it)` returns falsy on a miss and
+advances `it`):
 
 ```cpp
 nanofix::field_index_buffer<32> ibuf;
@@ -147,7 +148,7 @@ m.group(tag::NoMDEntries, tag::MDEntryType).for_each([&](nanofix::group_entry co
     nanofix::field_value px;
     if (!idx.truncated()) {
         std::size_t h = 0;
-        px = idx.find_with_hint(tag::MDEntryPx, h);
+        px = idx.find_with_hint(tag::MDEntryPx, h).value();
     } else {                                  // entry overran ibuf -> iterate
         auto it = e.begin();
         if (e.find_with_hint(tag::MDEntryPx, it)) px = it->value();
@@ -224,17 +225,60 @@ trailing message can be re-fed on the next read.
   unchanged). `find(tag::Price)` and `find_with_hint(tag::Price, cur)` — on
   `message_reader`, `group_entry`, `indexed_message`, `indexed_fields`,
   `iter_fields` — return a `typed_value<Type>` whose `try_as_int` /
-  `try_as_decimal` / `try_as_char` / `try_as_bool` / time accessors compile only
-  for the matching category;
-  `bytes()` / `as_string_view()` / `as_char_unchecked()` / `empty()` / `operator bool`
+  `try_as_decimal` / `try_as_char` / `try_as_bool` / date-time accessors compile
+  only for the matching category (UTCTimestamp → `timestamp` gating
+  `as_timestamp[_nano]` / `as_epoch_*`; UTCTimeOnly/LocalMktTime → `timeonly`
+  gating `as_timeonly[_nano]`; LocalMktDate/UTCDateOnly → `date` gating
+  `as_date`; MonthYear → `monthyear` gating `as_monthyear`);
+  `bytes()` / `as_string_view()` / `empty()` / `operator bool`
   stay universal, and `.value()` returns the raw `field_value` for the ungated /
-  `_unchecked` escape hatch. Wrong-type access (`try_as_int` on a `String`
+  `_unchecked` escape hatch (`typed_value` itself carries no `_unchecked`
+  methods). Wrong-type access (`try_as_int` on a `String`
   field) is a compile error. No runtime cost when the tag is known at compile
   time. The runtime-`int` overloads (`find_with_hint(int, …)`) stay for dynamic
   tags. `field_value` (from `it->value()`) keeps its full ungated API.
 - **`dictionary_init_field` / `dictionary_init_message`** moved from
   `nanofix/detail/fields.hpp` to the opt-in `nanofix/names.hpp` (header-location change,
   not an API removal). Include `<nanofix/names.hpp>` to use them.
+
+### Later additions in this fork
+
+- **Chrono `try_as_*` and `try_as<T>` / `as_unchecked<T>`** — named
+  fully-validating chrono accessors `try_as_timestamp(time_point&)`,
+  `try_as_timeonly(duration&)`, `try_as_date(year_month_day&)`,
+  `try_as_monthyear(year_month&)` (digits, separators, calendar/clock ranges —
+  stricter than the length-only named `as_*`), gated per category on
+  `typed_value`. The generic `try_as<T>` / `as_unchecked<T>` facades accept
+  the same chrono types and route to them. Targets with sub-millisecond
+  precision read the `.ssssss`/`.sssssssss` wire formats;
+  millisecond-or-coarser targets reject sub-ms wire instead of silently
+  truncating. `try_as<std::string_view>`
+  returns false on a missed lookup (null sentinel) and true with an empty view
+  for a present-but-empty field.
+- **Validating date/time writers** — `push_back_date` / `push_back_monthyear` /
+  `push_back_timeonly*` / `push_back_timestamp*` validate their parts
+  (4-digit year, calendar month/day, 23:59:60 clock — leap second allowed) and
+  set the sticky error instead of emitting corrupt digits; the epoch overloads
+  inherit this, so a year outside [0, 9999] can no longer reach the wire.
+  `push_back_decimal` accepts a positive exponent and emits the scaled integer
+  (`(5, 2)` → `500`).
+- **`push_back_bool` / `push_back_data(string_view)`** — `push_back_bool(tag, v)` writes FIX Boolean (`'Y'`/`'N'`), mirroring
+  `try_as_bool`. `push_back_data` gained a `string_view` overload.
+- **`group_view::for_each` count** — returns the number of entries actually visited;
+  comparing it with `size()` (the declared NoXxx count) detects a
+  count/content mismatch a gateway may want to reject.
+- **Framing tag literals** — framing verifies the literal `"8="`, `"9="`, `"35="`, and `"10="` tag bytes
+  (new `parse_error::begin_string_tag_missing` / `checksum_tag_missing`), and
+  every reader accessor with a validity precondition also rejects a
+  merely-incomplete reader (assert + safe return) — a partial `recv()` can no
+  longer reach null-pointer arithmetic.
+- **`NANOFIX_MAX_BODY_LENGTH`** — compile-time cap (default 999999999) on the
+  BodyLength accepted during framing; bounds how much a connector buffers
+  before rejecting a hostile frame.
+- **BodyLength zero-padding** — BodyLength is emitted zero-padded to 6 digits (`9=000123`),
+  as upstream does — the fixed width is what makes the single-pass backpatch
+  possible. Strict counterparty validators that reject zero-padded ints need
+  a re-serialization layer.
 
 ## Porting example
 
