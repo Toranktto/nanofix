@@ -9,8 +9,8 @@ namespace {
 using namespace nanofix_bench_parse;
 
 // The 20-tag sequential/random indexed sweeps — the overview table's indexed
-// read rows. Identical body to BM_Parse_FindTagsIndexed_Hint in
-// bench_parse.cpp; duplicated here so this TU stays tiny.
+// read rows. Hint hoisted across lookups (bench_parse.cpp's non-Hint variant
+// resets it per call); own TU so unrelated code can't shift its layout.
 template <int const* Tags, std::size_t N>
 void BM_Parse_FindTagsIndexed_Hint(benchmark::State& state, Dataset const* ds) {
     char const* begin = ds->data.data();

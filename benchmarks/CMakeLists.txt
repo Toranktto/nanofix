@@ -16,12 +16,10 @@ add_executable(nanofix_benchmarks
     bench_write.cpp
     bench_primitives.cpp
 )
-# The overview-table iterator and indexed sweeps each live in a tiny TU kept
-# out of LTO: merged into the LTO blob, GCC's inline-unit-growth budget and
-# whole-binary layout couple them to unrelated code — the iterator loops
-# pessimized ~18-19% next to the indexed AVX2 bodies, and the indexed sweeps
-# drifted ~2-3% on header changes they never execute. A native object keeps
-# its own budget and layout; everything else stays LTO.
+# The overview-table iterator and indexed sweeps live in tiny non-LTO TUs:
+# inside the LTO blob, inline budget and whole-binary layout couple them to
+# unrelated code (iter loops -18-19% next to the indexed AVX2 bodies; indexed
+# sweeps drifting ~2-3% on header changes they never execute).
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(bench_parse_hot_iter.cpp bench_parse_hot_indexed.cpp
         PROPERTIES COMPILE_OPTIONS "-fno-lto")
@@ -39,9 +37,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
     include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nanofix-jcc.cmake)
     nanofix_add_jcc_mitigation(nanofix_benchmarks)
 endif()
-# Fixed 32B function/loop alignment damps the code-layout lottery between
-# binaries built from slightly different headers (A/B comparability); the
-# upstream suite carries the same flags.
+# 32B function/loop alignment damps the layout lottery between binaries
+# built from slightly different headers; the upstream suite carries the same.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(nanofix_benchmarks PRIVATE
         -falign-functions=32 -falign-loops=32)
