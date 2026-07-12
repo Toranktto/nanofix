@@ -1,0 +1,62 @@
+name: fuzz-nightly
+
+# Long-budget fuzz campaign: the per-push CI job is a 60s smoke test, which is
+# not enough for a parser fed counterparty-controlled bytes. Shares the rolling
+# corpus cache with the CI job (same key family) so coverage accumulates.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    name: ubuntu / clang / libFuzzer (1h)
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4.3.1
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang
+      - name: Configure fuzz harness
+        run: |
+          cmake -S fuzz -B build/fuzz -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build fuzz_reader
+        run: cmake --build build/fuzz --target fuzz_reader --parallel
+      - name: Seed corpus
+        run: cmake --build build/fuzz --target fuzz_dataset
+      - name: Restore fuzz corpus
+        uses: actions/cache@v4.3.0
+        with:
+          path: fuzz-corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+      - name: Run libFuzzer (1h, halt on crash)
+        env:
+          NANOFIX_FUZZ_MAX_TIME: 3600
+        run: |
+          mkdir -p fuzz-corpus
+          build/fuzz/fuzz_reader \
+            -max_total_time=${NANOFIX_FUZZ_MAX_TIME} \
+            -timeout=10 \
+            -rss_limit_mb=2048 \
+            -dict=fuzz/fix.dict \
+            fuzz-corpus build/fuzz/dataset
+      - name: Upload crashes (if any)
+        if: failure()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: fuzz-nightly-crashes
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+          if-no-files-found: ignore
