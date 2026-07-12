@@ -127,6 +127,13 @@ m.group(tag::NoMDEntries, tag::MDUpdateAction)  // incremental delimiter
 carries enough fields to amortize the index. See
 [examples/fix50_mdmonitor](examples/fix50_mdmonitor/) for a worked group reader.
 
+Sharp edge: entry boundaries are "next delimiter occurrence", so the *last*
+entry extends to the end of the body — message-level fields placed after the
+group (Text, venue tails) land inside it and entry-level `find()` will match
+them. Read post-group fields at message level, and pick the delimiter from a
+per-(MsgType, group) table rather than inlining it at call sites: a wrong
+delimiter yields wrong entry boundaries silently, not an error.
+
 ### Streaming ingest and rejects
 
 A socket read rarely ends on a message boundary. `for_each_message` yields

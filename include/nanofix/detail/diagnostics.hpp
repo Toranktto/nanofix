@@ -36,7 +36,12 @@ inline void assert_fail([[maybe_unused]] char const* msg) noexcept {
 }
 }  // namespace detail
 
-/** \brief Count of `NANOFIX_ASSERT` failures since start (or last reset). */
+/** \brief Count of `NANOFIX_ASSERT` failures since start (or last reset).
+ *
+ * \warning The counter (and the handler slot) is an `inline` function-local
+ * static: one instance per dynamic object under hidden visibility. A process
+ * loading nanofix into several plugins/DSOs has one counter per DSO — poll
+ * (or install the handler) in each, not just the main binary. */
 [[nodiscard]] inline std::uint64_t assert_failure_count() noexcept {
     return detail::assert_failure_counter().load(std::memory_order_relaxed);
 }
