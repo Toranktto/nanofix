@@ -34,8 +34,6 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 
 ISOLATE_SCRIPT = """
 set -euxo pipefail
-# quoted heredoc: $GRUB_CMDLINE_LINUX_DEFAULT must reach the file unexpanded
-# (update-grub sources it after the distro defaults set that variable)
 sudo tee /etc/default/grub.d/99-bench-isol.cfg >/dev/null <<'EOF'
 GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT isolcpus={cpu} nohz_full={cpu} rcu_nocbs={cpu} irqaffinity=0"
 EOF
