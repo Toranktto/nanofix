@@ -41,18 +41,72 @@ void exercise_field_value(nanofix::field_value const& v) noexcept {
     (void)v.try_as_int(i_unsigned);
     (void)v.try_as_decimal(mantissa, exponent);
 
+    char c = 0;
+    bool b = false;
+    (void)v.try_as_char(c);
+    (void)v.try_as_bool(b);
+
     int yy = 0, mm = 0, dd = 0;
     (void)v.as_date(yy, mm, dd);
     (void)v.as_monthyear(yy, mm);
 
-    int h = 0, mi = 0, s = 0, ms = 0;
+    int h = 0, mi = 0, s = 0, ms = 0, ns = 0;
     (void)v.as_timeonly(h, mi, s, ms);
+    (void)v.as_timeonly_nano(h, mi, s, ns);
 
     (void)v.as_epoch_millis();
     (void)v.as_epoch_nanos();
 
+    // The fully validating chrono tier (digits/separators/ranges) — the
+    // default read surface for production callers, so it must be fuzzed too.
+    std::chrono::sys_time<std::chrono::milliseconds> tp_ms;
+    std::chrono::sys_time<std::chrono::nanoseconds> tp_ns;
+    (void)v.try_as_timestamp(tp_ms);
+    (void)v.try_as_timestamp(tp_ns);
+    std::chrono::milliseconds dur_ms{};
+    std::chrono::nanoseconds dur_ns{};
+    (void)v.try_as_timeonly(dur_ms);
+    (void)v.try_as_timeonly(dur_ns);
+    std::chrono::year_month_day ymd{};
+    (void)v.try_as_date(ymd);
+    std::chrono::year_month ym{};
+    (void)v.try_as_monthyear(ym);
+
     (void)v.size();
     (void)v.as_string_view();
+}
+
+// Typed find(tag::X) facade: category-gated accessors on a typed_value.
+void exercise_typed_find(nanofix::message_reader const& r) noexcept {
+    if (auto sending = r.find(nanofix::tag::SendingTime)) {
+        std::chrono::sys_time<std::chrono::nanoseconds> tp;
+        (void)sending.try_as_timestamp(tp);
+        (void)sending.as_epoch_millis();
+    }
+    if (auto px = r.find(nanofix::tag::Price)) {
+        int64_t m = 0, e = 0;
+        (void)px.try_as_decimal(m, e);
+    }
+    if (auto seq = r.find(nanofix::tag::MsgSeqNum)) {
+        uint64_t n = 0;
+        (void)seq.try_as_int(n);
+    }
+    if (auto side = r.find(nanofix::tag::Side)) {
+        char c = 0;
+        (void)side.try_as_char(c);
+    }
+    if (auto possdup = r.find(nanofix::tag::PossDupFlag)) {
+        bool b = false;
+        (void)possdup.try_as_bool(b);
+    }
+    if (auto d = r.find(nanofix::tag::MaturityDate)) {
+        std::chrono::year_month_day ymd{};
+        (void)d.try_as_date(ymd);
+    }
+    if (auto my = r.find(nanofix::tag::MaturityMonthYear)) {
+        std::chrono::year_month ym{};
+        (void)my.try_as_monthyear(ym);
+    }
 }
 
 void exercise_groups(nanofix::message_reader const& r) noexcept {
@@ -83,6 +137,7 @@ void fuzz_one(std::span<char const> wire) noexcept {
         (void)r.message_type();
         (void)r.check_sum();
 
+        exercise_typed_find(r);
         exercise_groups(r);
 
         nanofix::field_index_buffer<256> ibuf;
