@@ -34,9 +34,11 @@ class NanofixConan(ConanFile):
 
     options = {
         "with_docs": [True, False],
+        "disable_simd": [True, False],
     }
     default_options = {
         "with_docs": False,
+        "disable_simd": False,
     }
 
     exports = ("scripts/version.py",)
@@ -88,12 +90,16 @@ class NanofixConan(ConanFile):
         CMakeDeps(self).generate()
 
     def build(self):
-        cmake = CMake(self)
-        cmake.configure(variables={
+        variables = {
             "NANOFIX_BUILD": "OFF",
             "NANOFIX_BUILD_FIXSPEC_GEN": "ON",
             "NANOFIX_NATIVE_ARCH": "OFF",
-        })
+        }
+        if self.options.disable_simd:
+            # The packaged fixspec-gen must run on the consumer's build host.
+            variables["NANOFIX_DISABLE_SIMD"] = "ON"
+        cmake = CMake(self)
+        cmake.configure(variables=variables)
         cmake.build()
 
     def package(self):
@@ -118,6 +124,9 @@ class NanofixConan(ConanFile):
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.bindirs = ["bin"]
         self.cpp_info.libdirs = []
-        if self.settings.arch == "x86_64":
+        if self.options.disable_simd:
+            # simd.hpp #errors on x86-64 without __AVX2__ unless this is set.
+            self.cpp_info.defines.append("NANOFIX_DISABLE_SIMD=1")
+        elif self.settings.arch == "x86_64":
             flag = "/arch:AVX2" if self.settings.compiler == "msvc" else "-mavx2"
             self.cpp_info.cxxflags.append(flag)
