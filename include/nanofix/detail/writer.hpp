@@ -7,6 +7,7 @@
 #include <span>
 #include <string_view>
 #include <utility>
+#include <nanofix/detail/diagnostics.hpp>
 #include <nanofix/detail/numeric.hpp>
 #include <nanofix/detail/simd.hpp>
 #include <nanofix/detail/time.hpp>
@@ -26,7 +27,10 @@ public:
         : message_writer(std::span<char>(buffer, size)) {}
 
     message_writer(char* begin, char* end) noexcept
-        : message_writer(std::span<char>(begin, static_cast<std::size_t>(end - begin))) {}
+        : message_writer(
+              std::span<char>(begin, end >= begin ? static_cast<std::size_t>(end - begin) : 0)) {
+        NANOFIX_ASSERT(end >= begin, "message_writer(begin, end): inverted range.");
+    }
 
     template <std::size_t N>
     explicit message_writer(char (&buffer)[N]) noexcept
@@ -183,6 +187,10 @@ public:
     void push_back_decimal(int tag, Int_type mantissa, Int_type exponent) noexcept {
         if (error_) [[unlikely]]
             return;
+        if (tag <= 0) [[unlikely]] {  // see open_field
+            error_ = true;
+            return;
+        }
         std::ptrdiff_t const remaining = buffer_end_ - next_;
         // dtoa writes max(mantissa-field, 1 - exponent) digits + a dot; a deep
         // negative exponent outgrows the mantissa field, a positive one appends
@@ -451,7 +459,7 @@ public:
     void push_back_data(int tag_data_length, int tag_data, char const* begin, char const* end) noexcept {
         if (error_) [[unlikely]]
             return;
-        if (end < begin) [[unlikely]] {
+        if (end < begin || tag_data_length <= 0 || tag_data <= 0) [[unlikely]] {
             error_ = true;
             return;
         }
@@ -498,10 +506,16 @@ private:
 
     // Reserve room for `tag=<value_len bytes>\x01` and write the `tag=` prefix,
     // leaving next_ at the value. Returns false (and sets the sticky error_) if
-    // it won't fit. value_len is the caller's known max value width.
+    // it won't fit, or if the tag is not a positive FIX tag number (a negative
+    // tag would silently emit its unsigned wrap, e.g. -1 -> `4294967295=`).
+    // value_len is the caller's known max value width.
     NANOFIX_ALWAYS_INLINE bool open_field(int tag, std::ptrdiff_t value_len) noexcept {
         if (error_) [[unlikely]]
             return false;
+        if (tag <= 0) [[unlikely]] {
+            error_ = true;
+            return false;
+        }
         std::ptrdiff_t const need = detail::max_ascii_chars<int> + 1 + value_len + 1;
         if (buffer_end_ - next_ < need) [[unlikely]] {
             error_ = true;
@@ -524,6 +538,10 @@ private:
  * \brief Build one FIX message via `body(writer)` and push_back_trailer. Returns
  * `false` on any writer error — overflow, or `body` never called
  * `push_back_header`; `end_out` set to one past the last byte on success.
+ *
+ * \warning `body` runs inside a `noexcept` function: a throwing functor
+ * (e.g. a logging call that allocates) is `std::terminate`, not a `false`
+ * return. Writer methods themselves never throw.
  */
 template <class F>
 [[nodiscard]] inline bool try_write_message(std::span<char> buffer, char*& end_out, F&& body) noexcept {

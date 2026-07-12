@@ -124,17 +124,23 @@ TEST(NanofixTest, message_writer_bounds) {
         test_bound_checking([&](W& w) { w.push_back_string(58, std::string_view(test_string)); }),
         27);
     EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_char(58, 'a'); }), 14);
+    EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_bool(58, true); }), 14);
     EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_int(58, 55); }), 24);
     EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_decimal(58, 123456, -3); }), 25);
     EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_decimal(58, 123456, 0); }), 25);
     EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_date(58, 1970, 1, 1); }), 21);
     EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_monthyear(58, 1970, 1); }), 19);
     EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_timeonly(58, 23, 59, 59, 999); }), 25);
+    EXPECT_EQ(
+        test_bound_checking([&](W& w) { w.push_back_timeonly_nano(58, 23, 59, 59, 999999999); }), 31);
     EXPECT_EQ(test_bound_checking([&](W& w) { w.push_back_timestamp(58, 1970, 1, 1, 23, 59, 59); }),
               30);
     EXPECT_EQ(
         test_bound_checking([&](W& w) { w.push_back_timestamp(58, 1970, 1, 1, 23, 59, 59, 999); }),
         34);
+    EXPECT_EQ(test_bound_checking(
+                  [&](W& w) { w.push_back_timestamp_nano(58, 1970, 1, 1, 23, 59, 59, 999999999); }),
+              40);
     EXPECT_EQ(
         test_bound_checking([&](W& w) { w.push_back_data(58, 59, test_string, test_string + 14); }),
         51);
@@ -488,6 +494,25 @@ TEST(NanofixTest, find_all_soh_matches_scalar) {
             buf.data(), buf.data() + len, got_scalar.data(), got_scalar.size());
         got_scalar.resize(ns);
         EXPECT_EQ(got, got_scalar) << "dispatched vs scalar, trial " << trial;
+
+        // Binding cap: the vector paths guard the output buffer per block and
+        // fall to the scalar tail — offsets and count must still match the
+        // scalar impl exactly when cap < match count.
+        if (!expected.empty()) {
+            std::size_t const cap = expected.size() / 2;
+            std::vector<std::uint32_t> got_cap(cap ? cap : 1);
+            std::vector<std::uint32_t> got_cap_scalar(cap ? cap : 1);
+            std::size_t const nc =
+                nanofix::detail::find_all_soh(buf.data(), buf.data() + len, got_cap.data(), cap);
+            std::size_t const ncs = nanofix::detail::find_all_soh_scalar(
+                buf.data(), buf.data() + len, got_cap_scalar.data(), cap);
+            ASSERT_EQ(nc, ncs) << "capped count, trial " << trial;
+            got_cap.resize(nc);
+            got_cap_scalar.resize(ncs);
+            EXPECT_EQ(got_cap, got_cap_scalar) << "capped offsets, trial " << trial;
+            EXPECT_TRUE(std::equal(got_cap.begin(), got_cap.end(), expected.begin()))
+                << "capped prefix, trial " << trial;
+        }
     }
 }
 
@@ -520,8 +545,28 @@ TEST(NanofixTest, find_tag_in_index_matches_scalar) {
 // code, so >= 1024 is the only size that exercises it).
 TEST(NanofixTest, checksum_bytes_matches_scalar) {
     std::mt19937 rng(789);
-    constexpr std::size_t kSizes[] = {
-        0, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 1023, 1024, 1025, 4096, 4099};
+    constexpr std::size_t kSizes[] = {0,
+                                      1,
+                                      15,
+                                      16,
+                                      17,
+                                      63,
+                                      64,
+                                      65,
+                                      127,
+                                      128,
+                                      129,
+                                      255,
+                                      256,
+                                      257,
+                                      287,
+                                      288,  // AVX2 256-byte scalar cutoff +
+                                            // 128-byte stride epilogue
+                                      1023,
+                                      1024,
+                                      1025,
+                                      4096,
+                                      4099};
     for (std::size_t const len : kSizes) {
         std::vector<char> buf(len ? len : 1);
         std::uint8_t expected = 0;
@@ -2084,6 +2129,77 @@ TEST(Regression, calendar_day_in_month_validated) {
     EXPECT_FALSE(v("20240230").try_as_date(ymd));
     EXPECT_FALSE(v("21000229").try_as_date(ymd));  // century year, not leap
     EXPECT_TRUE(v("20000229").try_as_date(ymd));   // 400-year rule, leap
+}
+
+TEST(NanofixTest, writer_rejects_non_positive_tag) {
+    auto emits_error = [](auto&& fn) {
+        char buf[2048];
+        message_writer w(buf, sizeof(buf));
+        fn(w);
+        return !w.ok() && w.message_size() == 0;
+    };
+    // A negative tag would silently emit its unsigned wrap (`4294967295=...`)
+    // with ok() still true — a wrong-constant bug shipping wire-side.
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_int(-1, 5); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_string(0, "X"); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_decimal(-5, 100L, -2L); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_data(-95, 96, "D"); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_data(95, -96, "D"); }));
+}
+
+#ifndef NANOFIX_ASSERT_FAILFAST
+TEST(NanofixTest, inverted_range_ctors_are_guarded) {
+    char buf[64] = {};
+
+    reset_assert_failure_count();
+    message_reader r(buf + 32, buf);  // end < begin: clamps to empty, asserts
+    EXPECT_EQ(assert_failure_count(), 1u);
+    EXPECT_FALSE(r.is_complete());
+
+    message_writer w(buf + 32, buf);
+    EXPECT_EQ(assert_failure_count(), 2u);
+    EXPECT_EQ(w.buffer_size(), 0u);
+    w.push_back_header("FIX.4.2");
+    EXPECT_FALSE(w.ok());
+    reset_assert_failure_count();
+}
+#endif
+
+TEST(NanofixTest, trailer_rejects_body_over_six_digits) {
+    // BodyLength is a fixed 6-digit backpatch; a >999999-byte body must error,
+    // not wrap the itoa.
+    std::vector<char> buf(1'100'000);
+    std::vector<char> big(1'000'100, 'X');
+    message_writer w(buf.data(), buf.size());
+    w.push_back_header("FIX.4.2");
+    w.push_back_string(tag::MsgType, "B");
+    w.push_back_string(tag::Text, std::string_view(big.data(), big.size()));
+    ASSERT_TRUE(w.ok());
+    EXPECT_FALSE(w.push_back_trailer());
+    EXPECT_FALSE(w.ok());
+}
+
+TEST(NanofixTest, group_last_entry_absorbs_trailing_message_fields) {
+    // Documented sharp edge: the group view extends to r.end(), so message-level
+    // fields after the last entry land inside it and entry-level find() matches
+    // them. Read post-group fields at message level, not through the entry.
+    char buf[256];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_header("FIX.4.2");
+    w.push_back_string(tag::MsgType, "W");
+    w.push_back_int(tag::NoMDEntries, 1);
+    w.push_back_char(tag::MDEntryType, '0');
+    w.push_back_decimal(tag::MDEntryPx, 10000L, -2L);
+    w.push_back_string(tag::Text, "after-group");  // message-level trailing field
+    ASSERT_TRUE(w.push_back_trailer());
+    message_reader r(w);
+    ASSERT_TRUE(r.is_complete() && r.is_valid());
+
+    r.group(tag::NoMDEntries, tag::MDEntryType).for_each([](group_entry const& e) {
+        auto text = e.find(tag::Text);  // absorbed into the final entry
+        EXPECT_FALSE(text.empty());
+        EXPECT_EQ(text.as_string_view(), "after-group");
+    });
 }
 
 TEST(NanofixTest, second_push_back_trailer_rejected) {
