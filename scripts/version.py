@@ -36,9 +36,10 @@ def git_version(root):
     try:
         desc = _git("describe", "--tags", "--match", "v[0-9]*")
         version = desc[1:]  # drop the leading v
-        if "-" in version:  # v1.2.3-5-gabc1234 -> 1.2.3+5.gabc1234
-            base, n, ghash = version.rsplit("-", 2)
-            version = f"{base}+{n}.{ghash}"
+        # v1.2.3-5-gabc1234 -> 1.2.3+5.gabc1234. Anchored like the CMake
+        # implementation, so a pre-release tag (v1.2.3-rc1) passes through
+        # unchanged instead of crashing the unpack.
+        version = re.sub(r"-(\d+)-(g[0-9a-f]+)$", r"+\1.\2", version)
         return version
     except (subprocess.CalledProcessError, OSError):
         pass
