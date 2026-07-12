@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <limits>
+#include <ratio>
 #include <type_traits>
 #include <nanofix/detail/config.hpp>
 #include <nanofix/detail/numeric.hpp>
@@ -292,17 +294,30 @@ NANOFIX_ALWAYS_INLINE std::int64_t split_epoch_days(std::int64_t total,
     return days;
 }
 
+// Decompose a time_point into calendar/clock parts. Returns false when the
+// input is outside what the writers can represent — the conversion to the
+// target precision would multiply (source coarser than target) and a huge
+// epoch count would signed-overflow (UB) before any range check could run,
+// so the bound is checked in *source* units (dividing direction, safe).
 template <typename TimePoint>
     requires detail::is_time_point<TimePoint>::value
-inline void timepointtoparts(TimePoint tp,
-                             int& year,
-                             int& month,
-                             int& day,
-                             int& hour,
-                             int& minute,
-                             int& second,
-                             int& millisecond) noexcept {
+[[nodiscard]] inline bool timepointtoparts(TimePoint tp,
+                                           int& year,
+                                           int& month,
+                                           int& day,
+                                           int& hour,
+                                           int& minute,
+                                           int& second,
+                                           int& millisecond) noexcept {
+    using Dur = typename TimePoint::duration;
     constexpr std::int64_t kMsPerDay = 86'400'000;
+    if constexpr (std::ratio_greater_v<typename Dur::period, std::milli>) {
+        // 9999-12-31 23:59:59.999, the writers' year cap, in ms.
+        constexpr std::int64_t kMaxWritableMs = 253'402'300'799'999;
+        auto const bound = std::chrono::duration_cast<Dur>(std::chrono::milliseconds(kMaxWritableMs));
+        if (tp.time_since_epoch() > bound || tp.time_since_epoch() < -bound) [[unlikely]]
+            return false;
+    }
     auto const total_ms =
         std::chrono::time_point_cast<std::chrono::milliseconds>(tp).time_since_epoch().count();
     std::int64_t ms_in_day = 0;
@@ -317,19 +332,28 @@ inline void timepointtoparts(TimePoint tp,
     ms -= minute * 60'000;
     second = ms / 1000;
     millisecond = ms - second * 1000;
+    return true;
 }
 
 template <typename TimePoint>
     requires detail::is_time_point<TimePoint>::value
-inline void timepointtoparts_nano(TimePoint tp,
-                                  int& year,
-                                  int& month,
-                                  int& day,
-                                  int& hour,
-                                  int& minute,
-                                  int& second,
-                                  int& nanosecond) noexcept {
+[[nodiscard]] inline bool timepointtoparts_nano(TimePoint tp,
+                                                int& year,
+                                                int& month,
+                                                int& day,
+                                                int& hour,
+                                                int& minute,
+                                                int& second,
+                                                int& nanosecond) noexcept {
+    using Dur = typename TimePoint::duration;
     constexpr std::int64_t kNsPerDay = 86'400'000'000'000LL;
+    if constexpr (std::ratio_greater_v<typename Dur::period, std::nano>) {
+        // int64 nanoseconds saturate around year 2262; see timepointtoparts.
+        auto const bound = std::chrono::duration_cast<Dur>(
+            std::chrono::nanoseconds(std::numeric_limits<std::int64_t>::max()));
+        if (tp.time_since_epoch() > bound || tp.time_since_epoch() < -bound) [[unlikely]]
+            return false;
+    }
     auto const total_ns =
         std::chrono::time_point_cast<std::chrono::nanoseconds>(tp).time_since_epoch().count();
     std::int64_t ns_in_day = 0;
@@ -343,6 +367,7 @@ inline void timepointtoparts_nano(TimePoint tp,
     ns_in_day -= static_cast<std::int64_t>(minute) * 60'000'000'000LL;
     second = static_cast<int>(ns_in_day / 1'000'000'000LL);
     nanosecond = static_cast<int>(ns_in_day - static_cast<std::int64_t>(second) * 1'000'000'000LL);
+    return true;
 }
 
 }  // namespace detail

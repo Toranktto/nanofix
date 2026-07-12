@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <climits>
+#include <cstdint>
 #include <cstring>
 #include <iomanip>
 #include <iterator>
@@ -1192,6 +1194,10 @@ TEST(NanofixTest, writer_rejects_out_of_range_date_time_parts) {
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 1, 32); }));
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 2, 30); }));
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2023, 2, 29); }));
+    // INT_MIN parts: `m - 1` before the unsigned cast was signed-overflow UB
+    // (found by fuzz_writer; UBSan suite pins the fix).
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, INT_MIN, INT_MIN); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_monthyear(200, 2026, INT_MIN); }));
     EXPECT_TRUE(
         emits_error([](message_writer& w) { w.push_back_timestamp(52, 2026, 4, 31, 3, 4, 5); }));
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_monthyear(200, 2026, 13); }));
@@ -1225,6 +1231,39 @@ TEST(NanofixTest, writer_epoch_timestamp_out_of_range_sets_error) {
     w.push_back_timestamp_epoch_millis(52, 253'402'300'800'000LL);  // year 10000
     EXPECT_FALSE(w.ok());
     EXPECT_EQ(w.message_size(), 0u);
+}
+
+TEST(Regression, writer_chrono_timestamp_huge_epoch_no_overflow) {
+    using namespace std::chrono;
+    // A coarse-duration time_point converts to ms/ns by multiplying; a huge
+    // count must set the error, not signed-overflow (UB) inside the cast.
+    char buf[64];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_timestamp(52, sys_time<seconds>{seconds{INT64_MAX / 1000 + 1}});
+    EXPECT_FALSE(w.ok());
+
+    message_writer w2(buf, sizeof(buf));
+    w2.push_back_timestamp_nano(52, sys_time<milliseconds>{milliseconds{INT64_MAX / 1'000'000 + 1}});
+    EXPECT_FALSE(w2.ok());
+
+    message_writer w3(buf, sizeof(buf));
+    w3.push_back_timestamp(52, sys_time<seconds>{seconds{INT64_MIN / 1000 - 1}});
+    EXPECT_FALSE(w3.ok());
+}
+
+TEST(Regression, try_atod_exponent_underflow_rejected) {
+    // Zero mantissa never trips the overflow check, so only the exponent
+    // decrement bounds a long fraction; with a narrow Int_type it must reject,
+    // not underflow (signed-overflow UB).
+    std::string const s = "0." + std::string(200, '0');
+    field_value const v(s.data(), s.data() + s.size());
+    std::int8_t m8 = 0, e8 = 0;
+    EXPECT_FALSE(v.try_as_decimal(m8, e8));
+
+    std::int64_t m = 0, e = 0;  // ample exponent range: same wire parses
+    ASSERT_TRUE(v.try_as_decimal(m, e));
+    EXPECT_EQ(m, 0);
+    EXPECT_EQ(e, -200);
 }
 
 TEST(NanofixTest, try_as_string_view_false_on_missed_lookup) {
@@ -2727,7 +2766,7 @@ TEST(Regression, timepointtoparts_pre_epoch_floored) {
     int y, mo, d, h, mi, s, ms;
     // 1969-12-31 23:59:59.999
     auto tp = sys_time<milliseconds>{milliseconds{-1}};
-    nanofix::detail::timepointtoparts(tp, y, mo, d, h, mi, s, ms);
+    ASSERT_TRUE(nanofix::detail::timepointtoparts(tp, y, mo, d, h, mi, s, ms));
     EXPECT_EQ(y, 1969);
     EXPECT_EQ(mo, 12);
     EXPECT_EQ(d, 31);

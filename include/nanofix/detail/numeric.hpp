@@ -191,8 +191,13 @@ template <typename Int_type>
         if (!try_accumulate_digit(m, c, limit)) [[unlikely]]
             return false;
         seen_digit = true;
-        if (seen_dot)
+        if (seen_dot) {
+            // A zero-mantissa field with more fractional digits than Int_type's
+            // range would otherwise underflow e (signed-overflow UB).
+            if (e == std::numeric_limits<Int_type>::min()) [[unlikely]]
+                return false;
             --e;
+        }
     }
     if (!seen_digit) [[unlikely]]
         return false;

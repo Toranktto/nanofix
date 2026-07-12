@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -397,7 +398,11 @@ public:
     template <class Clock, class Duration>
     void push_back_timestamp(int tag, std::chrono::time_point<Clock, Duration> tp) noexcept {
         int year, month, day, hour, minute, second, millisecond;
-        detail::timepointtoparts(tp, year, month, day, hour, minute, second, millisecond);
+        if (!detail::timepointtoparts(tp, year, month, day, hour, minute, second, millisecond))
+            [[unlikely]] {
+            error_ = true;
+            return;
+        }
         push_back_timestamp(tag, year, month, day, hour, minute, second, millisecond);
     }
 
@@ -433,7 +438,11 @@ public:
     template <class Clock, class Duration>
     void push_back_timestamp_nano(int tag, std::chrono::time_point<Clock, Duration> tp) noexcept {
         int year, month, day, hour, minute, second, nanosecond;
-        detail::timepointtoparts_nano(tp, year, month, day, hour, minute, second, nanosecond);
+        if (!detail::timepointtoparts_nano(tp, year, month, day, hour, minute, second, nanosecond))
+            [[unlikely]] {
+            error_ = true;
+            return;
+        }
         push_back_timestamp_nano(tag, year, month, day, hour, minute, second, nanosecond);
     }
 
@@ -464,6 +473,12 @@ public:
             return;
         }
         std::ptrdiff_t const dlen = end - begin;
+        // The length field prints via int: a >INT_MAX span would emit a
+        // wrapped/negative length while memcpy copied the full range.
+        if (dlen > std::numeric_limits<int>::max()) [[unlikely]] {
+            error_ = true;
+            return;
+        }
         std::ptrdiff_t const need = detail::max_ascii_chars<int> + 1 + detail::max_ascii_chars<int> +
                                     1 + detail::max_ascii_chars<int> + 1 + dlen + 1;
         if (buffer_end_ - next_ < need) [[unlikely]] {
@@ -491,12 +506,14 @@ private:
     // or silently wrap in itoa_padded_unchecked, so they are rejected up front.
     // Unsigned wrap folds each pair of signed bounds into one compare.
     static bool valid_date(int y, int m, int d) noexcept {
-        return static_cast<unsigned>(y) <= 9999u && static_cast<unsigned>(m - 1) <= 11u &&
-               static_cast<unsigned>(d - 1) <= 30u && d <= detail::days_in_month(y, m);
+        // Subtract after the cast: `m - 1` in int is signed-overflow UB at
+        // INT_MIN; unsigned wrap is defined and still rejects.
+        return static_cast<unsigned>(y) <= 9999u && static_cast<unsigned>(m) - 1u <= 11u &&
+               static_cast<unsigned>(d) - 1u <= 30u && d <= detail::days_in_month(y, m);
     }
 
     static bool valid_monthyear(int y, int m) noexcept {
-        return static_cast<unsigned>(y) <= 9999u && static_cast<unsigned>(m - 1) <= 11u;
+        return static_cast<unsigned>(y) <= 9999u && static_cast<unsigned>(m) - 1u <= 11u;
     }
 
     static bool valid_time(int h, int mi, int s) noexcept {
