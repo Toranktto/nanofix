@@ -46,8 +46,8 @@ jobs:
           python-version: '3.12'
       - name: Install clang-format (pinned)
         run: pip install 'clang-format==20.1.8'
-      - name: Run format-check.sh
-        run: scripts/format-check.sh
+      - name: Run format_check.sh
+        run: scripts/format_check.sh
 
   clang-tidy:
     runs-on: ubuntu-24.04
@@ -155,10 +155,7 @@ jobs:
           echo INCLUDE=%INCLUDE%>> "%GITHUB_ENV%"
           echo LIB=%LIB%>> "%GITHUB_ENV%"
           echo LIBPATH=%LIBPATH%>> "%GITHUB_ENV%"
-
-      # Conan's msvc compiler.version, derived from the installed toolset
-      # (cl 19.51 -> 195). Hardcoding it breaks every time the runner image
-      # rolls to a new Visual Studio.
+ 
       - name: Detect MSVC toolset version (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -282,6 +279,13 @@ jobs:
         run: cmake --build build/fuzz --target fuzz_reader --parallel
       - name: Seed corpus
         run: cmake --build build/fuzz --target fuzz_dataset
+      - name: Restore fuzz corpus
+        uses: actions/cache@v4.3.0
+        with:
+          path: fuzz-corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
       - name: Run libFuzzer (60s, halt on crash)
         env:
           NANOFIX_FUZZ_MAX_TIME: 60
@@ -291,6 +295,7 @@ jobs:
             -max_total_time=${NANOFIX_FUZZ_MAX_TIME} \
             -timeout=10 \
             -rss_limit_mb=2048 \
+            -dict=fuzz/fix.dict \
             fuzz-corpus build/fuzz/dataset
       - name: Upload crashes (if any)
         if: failure()
@@ -302,6 +307,50 @@ jobs:
             leak-*
             timeout-*
           if-no-files-found: ignore
+
+  scalar:
+    runs-on: ubuntu-24.04
+    name: ubuntu / clang / NANOFIX_DISABLE_SIMD
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4.3.1
+      - name: Setup Python
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Install Conan and Ninja
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'conan==2.30.0'
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+      - name: Cache Conan packages
+        uses: actions/cache@v4.3.0
+        with:
+          path: ~/.conan2
+          key: conan2-scalar-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan2-scalar-
+      - name: Detect Conan profile
+        run: conan profile detect --force
+      - name: Conan install
+        run: |
+          conan install . \
+            --output-folder=build \
+            --build=missing \
+            -s build_type=Release \
+            -s compiler.cppstd=20 \
+            -s:b compiler.cppstd=20 \
+            -c tools.cmake.cmaketoolchain:generator=Ninja \
+            -c:h "tools.build:compiler_executables={\"c\":\"clang\",\"cpp\":\"clang++\"}"
+      - name: CMake configure (SIMD off)
+        run: cmake --preset conan-release -DNANOFIX_DISABLE_SIMD=ON
+      - name: CMake build
+        run: cmake --build build/build/Release --parallel
+      - name: ctest
+        run: ctest --test-dir build/build/Release --output-on-failure --parallel 4
 
   examples:
     runs-on: ubuntu-24.04
