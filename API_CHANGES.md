@@ -279,6 +279,19 @@ trailing message can be re-fed on the next read.
   as upstream does — the fixed width is what makes the single-pass backpatch
   possible. Strict counterparty validators that reject zero-padded ints need
   a re-serialization layer.
+- **Epoch/time_point reads are fully validating** — `as_epoch_millis` /
+  `as_epoch_nanos` and the `time_point` overloads of `as_timestamp` /
+  `as_timestamp_nano` now validate digits, separators, and calendar/clock
+  ranges (same tier as `try_as_timestamp`) instead of length only: garbage
+  bytes or an out-of-range clock (`99:99:99`) return nullopt/false rather
+  than a plausible-but-wrong epoch. The parts-based `as_*` accessors remain
+  the length-only fast tier. Calendar validation includes day-in-month
+  (Feb 30 rejects, leap-year Feb 29 passes) on both the strict readers and
+  the date/time writers.
+- **`push_back_trailer()` is once per message** — a second call returns
+  `false` and sets the sticky error instead of appending a second trailer
+  (which produced a self-consistent message with a stale `10=` field buried
+  in the body).
 
 ## Porting example
 

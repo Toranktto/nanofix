@@ -1,6 +1,3 @@
-// Corrupt and truncated frames must classify safely and never walk the iterator
-// past the buffer.
-
 #include <gtest/gtest.h>
 
 #include <nanofix.hpp>
@@ -276,7 +273,11 @@ TEST(StateMachineCorruption, incomplete_reader_accessors_are_guarded) {
     EXPECT_EQ(r.message_size(), 0u);
     EXPECT_EQ(r.message_end(), r.buffer_begin());
     EXPECT_EQ(r.calculate_check_sum(), 0u);
-    EXPECT_EQ(assert_failure_count(), 5u);  // begin, end, size, end-ptr, checksum
+    // prefix_end_ is null here; the accessors must return an empty range, not
+    // hand out a null end pointer / huge size.
+    EXPECT_EQ(r.prefix_begin(), r.prefix_end());
+    EXPECT_EQ(r.prefix_size(), 0u);
+    EXPECT_EQ(assert_failure_count(), 8u);  // + prefix begin, end, size
     reset_assert_failure_count();
 }
 

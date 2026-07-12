@@ -385,8 +385,9 @@ public:
      * \brief Non-validating counterpart of `try_as`, returned by value. Same
      * `T` set; trusted-input only — undefined output on malformed bytes, as
      * the `as_*_unchecked` methods it wraps. The chrono conversions keep the
-     * named `as_*` accessors' validation (length; plus the [1970, 2200] year
-     * gate for time_points) and return an epoch/zero placeholder on failure.
+     * named `as_*` accessors' validation (fully validating for time_points,
+     * length-only for durations/dates) and return an epoch/zero placeholder
+     * on failure.
      */
     template <typename T>
     [[nodiscard]] NANOFIX_HOT T as_unchecked() const noexcept {
@@ -605,8 +606,10 @@ public:
 
     //@}
 
-    /** \brief UTCTimestamp as signed epoch nanoseconds, or nullopt. Years
-     *  outside [1970, 2200] yield nullopt (epoch math would overflow int64). */
+    /** \brief UTCTimestamp as signed epoch nanoseconds, or nullopt. Fully
+     *  validating (digits, separators, calendar/clock ranges): a wrong-but-
+     *  plausible epoch from garbage bytes never comes back. Years outside
+     *  [1970, 2200] yield nullopt (epoch math would overflow int64). */
     [[nodiscard]] std::optional<std::int64_t> as_epoch_nanos() const noexcept {
         std::chrono::sys_time<std::chrono::nanoseconds> tp;
         if (!detail::atotimepoint_nano(begin(), end(), tp))
@@ -615,11 +618,11 @@ public:
     }
 
     /**
-     * \brief UTCTimestamp as signed epoch milliseconds, or nullopt.
-     * Millisecond wire precision at most: a `.ssssss`/`.sssssssss` timestamp
-     * returns nullopt rather than silently truncating — use
-     * `as_epoch_nanos` for those. Years outside [1970, 2200] yield nullopt
-     * (epoch math would overflow int64).
+     * \brief UTCTimestamp as signed epoch milliseconds, or nullopt. Fully
+     * validating, like `as_epoch_nanos`. Millisecond wire precision at most:
+     * a `.ssssss`/`.sssssssss` timestamp returns nullopt rather than silently
+     * truncating — use `as_epoch_nanos` for those. Years outside [1970, 2200]
+     * yield nullopt (epoch math would overflow int64).
      */
     [[nodiscard]] std::optional<std::int64_t> as_epoch_millis() const noexcept {
         std::chrono::sys_time<std::chrono::milliseconds> tp;
@@ -633,9 +636,11 @@ public:
 
     /**
      * \brief Parse a UTCTimestamp field into a `std::chrono::time_point`.
-     * Years outside [1970, 2200] return false (epoch math would overflow
-     * int64). Uses Howard Hinnant's proleptic Gregorian algorithms (see
-     * `http://howardhinnant.github.io/date_algorithms.html`).
+     * Fully validating — synonym for `try_as_timestamp` at millisecond
+     * precision; every time_point-producing read rejects garbage rather than
+     * returning a wrong epoch. Years outside [1970, 2200] return false (epoch
+     * math would overflow int64). Uses Howard Hinnant's proleptic Gregorian
+     * algorithms (see `http://howardhinnant.github.io/date_algorithms.html`).
      */
     template <typename Clock, typename Duration>
     [[nodiscard]] bool as_timestamp(std::chrono::time_point<Clock, Duration>& tp) const {
@@ -644,7 +649,8 @@ public:
 
     /**
      * \brief Parse a UTCTimestamp field with nanosecond precision into a
-     * `std::chrono::time_point`. Year range as in the millisecond overload.
+     * `std::chrono::time_point`. Fully validating; year range as in the
+     * millisecond overload.
      */
     template <typename Clock, typename Duration>
     [[nodiscard]] bool as_timestamp_nano(std::chrono::time_point<Clock, Duration>& tp) const {

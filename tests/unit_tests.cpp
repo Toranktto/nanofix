@@ -1145,6 +1145,10 @@ TEST(NanofixTest, writer_rejects_out_of_range_date_time_parts) {
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 13, 2); }));
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 0, 2); }));
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 1, 32); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 2, 30); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2023, 2, 29); }));
+    EXPECT_TRUE(
+        emits_error([](message_writer& w) { w.push_back_timestamp(52, 2026, 4, 31, 3, 4, 5); }));
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_monthyear(200, 2026, 13); }));
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_timeonly(273, 24, 0, 0); }));
     EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_timeonly(273, 12, 60, 0); }));
@@ -1163,6 +1167,11 @@ TEST(NanofixTest, writer_accepts_leap_second_and_valid_parts) {
     w.push_back_timeonly(273, 23, 59, 60);  // leap second is legal FIX
     ASSERT_TRUE(w.ok());
     EXPECT_EQ(std::string(w.message_begin(), w.message_end()), "273=23:59:60\x01");
+
+    message_writer w2(buf, sizeof(buf));
+    w2.push_back_date(75, 2024, 2, 29);  // leap-year Feb 29 is a real date
+    ASSERT_TRUE(w2.ok());
+    EXPECT_EQ(std::string(w2.message_begin(), w2.message_end()), "75=20240229\x01");
 }
 
 TEST(NanofixTest, writer_epoch_timestamp_out_of_range_sets_error) {
@@ -2039,6 +2048,57 @@ TEST(Regression, as_epoch_nanos_non_digit_subsecond_rejected) {
     auto it = r.begin();
     ASSERT_TRUE(r.find_with_hint(tag::SendingTime, it));
     EXPECT_FALSE(it->value().as_epoch_nanos().has_value());
+}
+
+TEST(Regression, as_epoch_fully_validates_digits_and_clock_ranges) {
+    auto v = [](char const* s) { return field_value(s, s + std::strlen(s)); };
+    // Non-digit fraction decoded 'S','E','P' as digits: epoch off by seconds
+    // with has_value() true. The nanos twin already rejected this.
+    EXPECT_FALSE(v("20240115-09:30:00.SEP").as_epoch_millis().has_value());
+    // Out-of-range clock parts rolled into the next day.
+    EXPECT_FALSE(v("20240115-99:99:99").as_epoch_millis().has_value());
+    EXPECT_FALSE(v("20240115-99:99:99").as_epoch_nanos().has_value());
+    EXPECT_FALSE(v("20240115X09:30:00").as_epoch_millis().has_value());  // bad separator
+    EXPECT_FALSE(v("2024011X-09:30:00").as_epoch_millis().has_value());  // non-digit date
+
+    EXPECT_TRUE(v("20240115-23:59:60").as_epoch_millis().has_value());  // leap second
+    EXPECT_TRUE(v("20240115-09:30:00.250").as_epoch_millis().has_value());
+
+    std::chrono::sys_time<std::chrono::milliseconds> tp;
+    EXPECT_FALSE(v("20240115-99:99:99").as_timestamp(tp));  // same tier as epoch
+}
+
+TEST(Regression, calendar_day_in_month_validated) {
+    using namespace std::chrono;
+    auto v = [](char const* s) { return field_value(s, s + std::strlen(s)); };
+
+    sys_time<milliseconds> tp;
+    EXPECT_FALSE(v("20240231-12:00:00").try_as_timestamp(tp));  // Feb 31
+    EXPECT_FALSE(v("20230229-12:00:00").try_as_timestamp(tp));  // non-leap Feb 29
+    EXPECT_TRUE(v("20240229-12:00:00").try_as_timestamp(tp));   // leap Feb 29
+    EXPECT_FALSE(v("20240431-12:00:00").try_as_timestamp(tp));  // Apr 31
+    EXPECT_FALSE(v("20240230-12:00:00").as_epoch_millis().has_value());
+    EXPECT_FALSE(v("20240230-12:00:00").as_epoch_nanos().has_value());
+
+    year_month_day ymd{};
+    EXPECT_FALSE(v("20240230").try_as_date(ymd));
+    EXPECT_FALSE(v("21000229").try_as_date(ymd));  // century year, not leap
+    EXPECT_TRUE(v("20000229").try_as_date(ymd));   // 400-year rule, leap
+}
+
+TEST(NanofixTest, second_push_back_trailer_rejected) {
+    char buf[256];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_header("FIX.4.2");
+    w.push_back_string(tag::MsgType, "0");
+    ASSERT_TRUE(w.push_back_trailer());
+    std::string const wire(w.message_begin(), w.message_end());
+
+    // A second trailer would bury the first 10= inside the body as a
+    // self-consistent, silently corrupt message.
+    EXPECT_FALSE(w.push_back_trailer());
+    EXPECT_FALSE(w.ok());
+    EXPECT_EQ(std::string(w.message_begin(), w.message_end()), wire);
 }
 
 TEST(NanofixTest, increment_terminates_on_malformed_data_length_field) {

@@ -205,9 +205,14 @@ Append venue XML to `fixspec-gen` input to union the bitmap.
   `std::chrono::time_point` (UTCTimestamp), `duration` (UTCTimeOnly),
   `year_month_day` (date), `year_month` (MonthYear). Chrono types route to the
   named `try_as_timestamp` / `try_as_timeonly` / `try_as_date` /
-  `try_as_monthyear` — fully validating (digits/separators/ranges — stricter
-  than the length-only named `as_*`); sub-milli targets read the nano wire
+  `try_as_monthyear` — fully validating (digits/separators/calendar incl.
+  day-in-month/clock ranges — stricter than the length-only parts-based
+  `as_*`); sub-milli targets read the nano wire
   formats, milli-or-coarser targets reject sub-ms wire instead of truncating.
+  Everything that produces an epoch or `time_point` (`as_epoch_millis` /
+  `as_epoch_nanos`, `as_timestamp(tp)` / `as_timestamp_nano(tp)`) is fully
+  validating too — a wrong-but-plausible epoch never comes back; only the
+  parts-based `as_*` (ints out) stay length-only.
   No `try_as_fixed`:
   decimal→fixed-point ticks is consumer/venue knowledge (no FIX wire type is
   fixed-point), so it lives in the caller.
@@ -230,9 +235,10 @@ operator int()`, so writer / comparison / `group()` call sites take it unchanged
   `as_timestamp[_nano]` / `as_epoch_*` / `try_as_timestamp` (`timestamp`),
   `as_timeonly[_nano]` / `try_as_timeonly` (`timeonly`), `as_date` /
   `try_as_date` (`date` — LocalMktDate/UTCDateOnly), `as_monthyear` /
-  `try_as_monthyear` (`monthyear`). The `try_as_*` chrono forms are the fully
-  validating tier (digits/separators/ranges); the `as_*` forms validate length
-  only. Wrong-type access does not compile.
+  `try_as_monthyear` (`monthyear`). The `try_as_*` chrono forms and the
+  epoch/`time_point`-producing `as_*` forms are the fully validating tier
+  (digits/separators/calendar/clock ranges); the parts-based `as_*` forms
+  validate length only. Wrong-type access does not compile.
 - No `_unchecked` on `typed_value`: reach the ungated, any-tag escape hatch via
   `.value()` (returns the raw `field_value`, which keeps the full ungated API).
 

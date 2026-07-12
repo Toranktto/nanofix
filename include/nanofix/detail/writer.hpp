@@ -53,7 +53,9 @@ public:
     /**
      * \brief Backfill BodyLength and append the CheckSum trailer.
      *
-     * `false` (and sticky error) when no `push_back_header` preceded it, the
+     * `false` (and sticky error) when no `push_back_header` preceded it, a
+     * trailer was already appended (a second call would bury the first `10=`
+     * inside the body as a self-consistent, silently corrupt message), the
      * body exceeds BodyLength's 6 digits (999999), or the trailer does not
      * fit. `CalculateChecksum = false` emits a literal `10=000` stub.
      */
@@ -61,7 +63,7 @@ public:
     [[nodiscard]] bool push_back_trailer() noexcept {
         if (error_) [[unlikely]]
             return false;
-        if (!body_length_) [[unlikely]] {
+        if (!body_length_ || trailer_done_) [[unlikely]] {
             error_ = true;
             return false;
         }
@@ -90,6 +92,7 @@ public:
             std::memcpy(next_, "10=000\x01", 7);
             next_ += 7;
         }
+        trailer_done_ = true;
         return true;
     }
 
@@ -481,7 +484,7 @@ private:
     // Unsigned wrap folds each pair of signed bounds into one compare.
     static bool valid_date(int y, int m, int d) noexcept {
         return static_cast<unsigned>(y) <= 9999u && static_cast<unsigned>(m - 1) <= 11u &&
-               static_cast<unsigned>(d - 1) <= 30u;
+               static_cast<unsigned>(d - 1) <= 30u && d <= detail::days_in_month(y, m);
     }
 
     static bool valid_monthyear(int y, int m) noexcept {
@@ -514,6 +517,7 @@ private:
     char* next_;
     char* body_length_ = nullptr;
     bool error_ = false;
+    bool trailer_done_ = false;
 };
 
 /**

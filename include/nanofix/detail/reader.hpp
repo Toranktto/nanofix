@@ -197,6 +197,8 @@ public:
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     char const* prefix_begin() const noexcept {
         NANOFIX_ASSERT(usable_, "Cannot read BeginString prefix on incomplete or invalid message.");
+        if (!usable_) [[unlikely]]  // prefix_end_ is null; return an empty range
+            return buffer_;
         return buffer_ + 2;
     }
 
@@ -204,6 +206,8 @@ public:
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     char const* prefix_end() const noexcept {
         NANOFIX_ASSERT(usable_, "Cannot read BeginString prefix on incomplete or invalid message.");
+        if (!usable_) [[unlikely]]
+            return buffer_;
         return prefix_end_;
     }
 
@@ -211,6 +215,8 @@ public:
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     size_t prefix_size() const noexcept {
         NANOFIX_ASSERT(usable_, "Cannot read BeginString prefix on incomplete or invalid message.");
+        if (!usable_) [[unlikely]]
+            return 0;
         return static_cast<size_t>(prefix_end_ - buffer_ - 2);
     }
 

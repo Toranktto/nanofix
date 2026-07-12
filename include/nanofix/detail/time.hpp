@@ -52,6 +52,16 @@ NANOFIX_ALWAYS_INLINE void civil_from_days(std::int64_t days_since_epoch,
     year = y + (month <= 2 ? 1 : 0);
 }
 
+NANOFIX_ALWAYS_INLINE bool is_leap_year(int year) noexcept {
+    return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+}
+
+/// \pre `month` in [1, 12].
+NANOFIX_ALWAYS_INLINE int days_in_month(int year, int month) noexcept {
+    constexpr unsigned char kDays[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    return kDays[month - 1] + (month == 2 && is_leap_year(year));
+}
+
 inline bool atodate(char const* begin, char const* end, int& year, int& month, int& day) noexcept {
     if (end - begin != 8)
         return false;
@@ -140,37 +150,13 @@ NANOFIX_ALWAYS_INLINE bool timestamp_to_timepoint(char const* date_begin,
     if (!atodate(date_begin, date_begin + 8, year, month, day))
         return false;
     if (year < kMinSupportedYear || year > kMaxSupportedYear || month < 1 || month > 12 ||
-        day < 1 || day > 31)
+        day < 1 || day > days_in_month(year, month))
         return false;
 
     std::int64_t const days_since_epoch = days_from_civil(year, month, day);
     tp = TimePoint(std::chrono::seconds(days_since_epoch * 86400) + std::chrono::hours(hour) +
                    std::chrono::minutes(minute) + std::chrono::seconds(second) + subsecond);
     return true;
-}
-
-template <typename TimePoint>
-    requires detail::is_time_point<TimePoint>::value
-inline bool atotimepoint(char const* begin, char const* end, TimePoint& tp) noexcept {
-    if (end - begin < 9)
-        return false;
-    int hour, minute, second, millisecond;
-    if (!atotime(begin + 9, end, hour, minute, second, millisecond))
-        return false;
-    return timestamp_to_timepoint(
-        begin, hour, minute, second, std::chrono::milliseconds(millisecond), tp);
-}
-
-template <typename TimePoint>
-    requires detail::is_time_point<TimePoint>::value
-inline bool atotimepoint_nano(char const* begin, char const* end, TimePoint& tp) noexcept {
-    if (end - begin < 9)
-        return false;
-    int hour, minute, second, nanosecond;
-    if (!atotime_nano(begin + 9, end, hour, minute, second, nanosecond))
-        return false;
-    return timestamp_to_timepoint(
-        begin, hour, minute, second, std::chrono::nanoseconds(nanosecond), tp);
 }
 
 template <typename T>
@@ -190,7 +176,7 @@ inline bool try_atodate_strict(
     int y, m, d;
     if (!atodate(begin, end, y, m, d))
         return false;
-    if (m < 1 || m > 12 || d < 1 || d > 31)
+    if (m < 1 || m > 12 || d < 1 || d > days_in_month(y, m))
         return false;
     year = y;
     month = m;
@@ -274,6 +260,22 @@ inline bool try_atotimepoint_nano_strict(char const* begin, char const* end, Tim
         return false;
     return timestamp_to_timepoint(
         begin, hour, minute, second, std::chrono::nanoseconds(nanosecond), tp);
+}
+
+// Every time_point-producing parse is fully validating: a wrong-but-plausible
+// epoch value (non-digit bytes decoded as numbers, hour 99 rolling into the
+// next day) is worse than a reject. The length-only fast tier stays available
+// through the parts-based `as_*` accessors, which never assemble an epoch.
+template <typename TimePoint>
+    requires detail::is_time_point<TimePoint>::value
+inline bool atotimepoint(char const* begin, char const* end, TimePoint& tp) noexcept {
+    return try_atotimepoint_strict(begin, end, tp);
+}
+
+template <typename TimePoint>
+    requires detail::is_time_point<TimePoint>::value
+inline bool atotimepoint_nano(char const* begin, char const* end, TimePoint& tp) noexcept {
+    return try_atotimepoint_nano_strict(begin, end, tp);
 }
 
 // Floored divmod of an epoch count into (days, remainder-in-day). C++ `/`
