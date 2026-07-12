@@ -127,6 +127,46 @@ m.group(tag::NoMDEntries, tag::MDUpdateAction)  // incremental delimiter
 carries enough fields to amortize the index. See
 [examples/fix50_mdmonitor](examples/fix50_mdmonitor/) for a worked group reader.
 
+### Streaming ingest and rejects
+
+A socket read rarely ends on a message boundary. `for_each_message` yields
+each complete, valid frame, silently resyncing past garbage, and returns the
+start of the unconsumed tail — copy that tail to the buffer head and read on:
+
+```cpp
+char ring[1 << 16];
+std::size_t used = 0;  // bytes carried over from the previous recv
+for (;;) {
+    auto n = recv(fd, ring + used, sizeof(ring) - used, 0);
+    if (n <= 0)
+        break;
+    std::span<char const> wire(ring, used + static_cast<std::size_t>(n));
+
+    char const* tail = nanofix::for_each_message(wire, [&](nanofix::message_reader const& r) {
+        unsigned char wire_sum = 0;  // checksum policy: drop on mismatch
+        if (!r.check_sum()->value().try_as_int(wire_sum) || wire_sum != r.calculate_check_sum())
+            return;
+        dispatch(r);
+    });
+
+    used = static_cast<std::size_t>(wire.data() + wire.size() - tail);
+    std::memmove(ring, tail, used);  // incomplete frame -> buffer head
+}
+```
+
+A session gateway that must *reject* mis-framed input instead of skipping it
+walks readers explicitly — `for_each_message` never surfaces invalid frames:
+
+```cpp
+for (nanofix::message_reader r(wire); r.is_complete(); r = r.next_message_reader()) {
+    if (!r.is_valid()) {
+        emit_session_reject(r.error());  // parse_error mirrors SessionRejectReason
+        continue;                        // next_message_reader() resyncs on "8=FIX"
+    }
+    dispatch(r);
+}
+```
+
 ## Build
 
 CMake 3.20+, Conan 2.x, C++20 toolchain.
@@ -300,10 +340,12 @@ of that delta flips between runs. Supported: GCC, Clang, AppleClang, MSVC
 
 A standalone CMake project under [fuzz/](fuzz/) builds a libFuzzer + ASan +
 UBSan binary over `message_reader`, `for_each_message`, repeating groups,
-`build_field_index`, and the `try_as_*` family, seeded from
+`build_field_index`, the typed `find(tag::X)` facade, and the full `try_as_*`
+family including the validating chrono tier, seeded from
 [tests/data/](tests/data/) and a FIX-token dictionary
-([fuzz/fix.dict](fuzz/fix.dict)). Replay a crash with
-`build/fuzz/fuzz_reader ./crash-<hash>`.
+([fuzz/fix.dict](fuzz/fix.dict)). CI runs a 60 s smoke per push and a 1 h
+nightly campaign (`fuzz-nightly.yml`), both feeding one rolling corpus cache.
+Replay a crash with `build/fuzz/fuzz_reader ./crash-<hash>`.
 
 ## Thread safety and errors
 
@@ -314,6 +356,15 @@ invariants use `NANOFIX_ASSERT` (an atomic counter + optional handler, no
 caller-owned and never mutated by a reader, so any number of `message_reader`s
 over the same `const` buffer are safe to use concurrently across threads
 (TSan-validated; see `tests/threading_tests.cpp`).
+
+Sharing is per *buffer*, not per accessor object. Anything with an internal
+cursor or index is one-thread-at-a-time by design: `indexed_fields<N>` mutates
+its shared lookup hint on every `find()` (share the underlying
+`indexed_message` and call `find_with_hint` with a per-thread hint instead),
+`iter_fields` advances a cursor, a `field_index_buffer` must not be rebuilt
+while another thread reads an `indexed_message` over it, and `message_writer`
+is one thread, one buffer. Rule of thumb: share `const` bytes freely; give
+every thread its own accessor objects.
 
 ## Production readiness
 
@@ -341,10 +392,12 @@ Deployment notes, roughly in priority order:
   gate.
 - **Default to `try_as_*` off the wire.** The `*_unchecked` readers are for
   externally validated fields; on garbage their output is undefined
-  (documented per method). The named `as_*` time accessors validate structure
-  and length, not every digit — read time fields with
-  `try_as<std::chrono::...>` for full validation, or range-check after
-  parsing.
+  (documented per method). The parts-based `as_*` time accessors
+  (`as_timeonly(h,m,s,ms)`, `as_date(y,m,d)`, …) validate length only —
+  range-check after parsing. Everything that produces an epoch or
+  `time_point` (`as_epoch_millis` / `as_epoch_nanos`, `as_timestamp(tp)`,
+  `try_as<std::chrono::...>`) is fully validating: digits, separators,
+  calendar (incl. day-in-month) and clock ranges.
 - **Size `field_index_buffer<N>` for the venue.** Overflow is all-or-nothing:
   `truncated()` yields an empty index and `with_fields` falls back to the
   iterator — a tail-latency cliff, not an error. Monitor `truncated()` in
@@ -352,7 +405,8 @@ Deployment notes, roughly in priority order:
 - **Check the CPU baseline.** x86-64 builds assume AVX2 (Haswell, 2013+);
   ship `-DNANOFIX_DISABLE_SIMD=ON` for older fleets. `NANOFIX_NATIVE_ARCH`
   (default ON) tunes for the build host — turn it off for binaries that move
-  between machines.
+  between machines (the Conan recipe already builds its packaged `fixspec-gen`
+  with it OFF so binary packages stay portable).
 - **Pin a release.** `NANOFIX_VERSION` / `NANOFIX_VERSION_{MAJOR,MINOR,PATCH}`
   (via `<nanofix.hpp>`) identify the header set at compile time. Version truth
   is git: the latest `v*` tag (`git describe`), with dev builds stamped
