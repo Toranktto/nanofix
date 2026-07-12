@@ -6,6 +6,7 @@
 #include <cstring>
 #include <span>
 #include <string_view>
+#include <nanofix/detail/diagnostics.hpp>
 #include <nanofix/detail/fields.hpp>
 #include <nanofix/detail/numeric.hpp>
 #include <nanofix/detail/simd.hpp>
@@ -23,11 +24,13 @@ enum class parse_error : std::uint8_t {
     begin_string_unterminated,  // BeginString has no SOH within the bound
     body_length_tag_missing,    // BeginString not followed by tag 9
     body_length_not_numeric,    // non-digit in BodyLength
-    body_length_overflow,       // BodyLength exceeds the 9-digit cap
+    body_length_overflow,       // BodyLength exceeds NANOFIX_MAX_BODY_LENGTH
     msg_type_tag_missing,       // BodyLength not followed by tag 35
     checksum_soh_missing,       // no SOH immediately before CheckSum
     trailer_soh_missing,        // no SOH terminating CheckSum
     msg_type_unterminated,      // MsgType value runs past the trailer
+    begin_string_tag_missing,   // buffer does not start with "8="
+    checksum_tag_missing,       // trailer field is not "10="
 };
 
 /**
@@ -51,7 +54,7 @@ public:
     typedef field const* const_pointer;
     typedef size_t size_type;
 
-    explicit message_reader(std::span<char const> buffer)
+    explicit message_reader(std::span<char const> buffer) noexcept
         : end_(*this, nullptr),
           buffer_(buffer.data()),
           buffer_end_(buffer.data() + buffer.size()),
@@ -61,10 +64,10 @@ public:
         init();
     }
 
-    message_reader(char const* buffer, std::size_t size)
+    message_reader(char const* buffer, std::size_t size) noexcept
         : message_reader(std::span<char const>(buffer, size)) {}
 
-    message_reader(char const* begin, char const* end)
+    message_reader(char const* begin, char const* end) noexcept
         : message_reader(std::span<char const>(begin, static_cast<std::size_t>(end - begin))) {}
 
     message_reader(message_reader const&) noexcept = default;
@@ -74,7 +77,7 @@ public:
 
     /// Read back a just-written message. Equivalent to
     /// `message_reader(w.message_begin(), w.message_end())`.
-    message_reader(message_writer const& that)
+    message_reader(message_writer const& that) noexcept
         : end_(*this, nullptr),
           buffer_(that.message_begin()),
           buffer_end_(that.message_end()),
@@ -86,7 +89,7 @@ public:
 
     /// Read from the entire array of length N.
     template <size_t N>
-    message_reader(char const (&buffer)[N])
+    message_reader(char const (&buffer)[N]) noexcept
         : end_(*this, nullptr),
           buffer_(buffer),
           buffer_end_(&(buffer[N])),
@@ -120,7 +123,7 @@ public:
      *
      * \pre `is_complete()`. Fires `NANOFIX_ASSERT` otherwise.
      */
-    message_reader next_message_reader() const {
+    message_reader next_message_reader() const noexcept {
         NANOFIX_ASSERT(is_complete_, "Can't call next_message_reader on an incomplete message.");
 
         if (!is_valid_) [[unlikely]] {  // resync by scanning for the next "8=FIX"
@@ -151,64 +154,63 @@ public:
      * unsigned char wire = 0;
      * if (r.check_sum()->value().try_as_int(wire) && wire == r.calculate_check_sum()) {}
      * \endcode
-     * \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
+     * \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
      */
     [[nodiscard]] unsigned char calculate_check_sum() const noexcept {
-        NANOFIX_ASSERT(is_valid_, "Cannot calculate checksum for an invalid message.");
+        NANOFIX_ASSERT(usable_, "Cannot calculate checksum for an incomplete or invalid message.");
+        if (!usable_) [[unlikely]]  // end_ internals are null
+            return 0;
         return detail::checksum_bytes(buffer_, end_.buffer_);
     }
 
     /** \name Field Access */
     //@{
     /// Iterator at MsgType; synonym `message_type()`.
-    /// \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
-    NANOFIX_ALWAYS_INLINE const_iterator begin() const {
-        NANOFIX_ASSERT(is_valid_, "Cannot return iterator for an invalid message.");
+    /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
+    NANOFIX_ALWAYS_INLINE const_iterator begin() const noexcept {
+        NANOFIX_ASSERT(usable_, "Cannot return iterator for an incomplete or invalid message.");
         return begin_;
     }
 
     /// Iterator at CheckSum; synonym `check_sum()`.
-    /// \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
-    NANOFIX_ALWAYS_INLINE const_iterator end() const {
-        NANOFIX_ASSERT(is_valid_, "Cannot return iterator for an invalid message.");
+    /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
+    NANOFIX_ALWAYS_INLINE const_iterator end() const noexcept {
+        NANOFIX_ASSERT(usable_, "Cannot return iterator for an incomplete or invalid message.");
         return end_;
     }
 
     /// Synonym for `begin()`.
-    /// \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
-    const_iterator message_type() const {
-        NANOFIX_ASSERT(is_valid_, "Cannot return iterator for an invalid message.");
+    /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
+    const_iterator message_type() const noexcept {
+        NANOFIX_ASSERT(usable_, "Cannot return iterator for an incomplete or invalid message.");
         return begin_;
     }
 
     /// Synonym for `end()`.
-    /// \pre `is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
-    const_iterator check_sum() const {
-        NANOFIX_ASSERT(is_valid_, "Cannot return iterator for an invalid message.");
+    /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
+    const_iterator check_sum() const noexcept {
+        NANOFIX_ASSERT(usable_, "Cannot return iterator for an incomplete or invalid message.");
         return end_;
     }
 
     /// Begin pointer of the BeginString value (e.g. "FIXT.1.1").
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     char const* prefix_begin() const noexcept {
-        NANOFIX_ASSERT(is_complete_ && is_valid_,
-                       "Cannot read BeginString prefix on incomplete or invalid message.");
+        NANOFIX_ASSERT(usable_, "Cannot read BeginString prefix on incomplete or invalid message.");
         return buffer_ + 2;
     }
 
     /// End pointer of the BeginString value.
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     char const* prefix_end() const noexcept {
-        NANOFIX_ASSERT(is_complete_ && is_valid_,
-                       "Cannot read BeginString prefix on incomplete or invalid message.");
+        NANOFIX_ASSERT(usable_, "Cannot read BeginString prefix on incomplete or invalid message.");
         return prefix_end_;
     }
 
     /// Length of the BeginString value (e.g. 8 for "FIXT.1.1").
     /// \pre `is_complete() && is_valid()`. Fires `NANOFIX_ASSERT` otherwise.
     size_t prefix_size() const noexcept {
-        NANOFIX_ASSERT(is_complete_ && is_valid_,
-                       "Cannot read BeginString prefix on incomplete or invalid message.");
+        NANOFIX_ASSERT(usable_, "Cannot read BeginString prefix on incomplete or invalid message.");
         return static_cast<size_t>(prefix_end_ - buffer_ - 2);
     }
 
@@ -229,7 +231,8 @@ public:
      *   std::string_view targetcompid = i++->value().as_string_view();
      * \endcode
      */
-    [[nodiscard]] NANOFIX_ALWAYS_INLINE bool find_with_hint(int tag, const_iterator& i) const {
+    [[nodiscard]] NANOFIX_ALWAYS_INLINE bool find_with_hint(int tag,
+                                                            const_iterator& i) const noexcept {
         return nanofix::find_with_hint(begin(), end(), tag_equal(tag), i);
     }
 
@@ -237,7 +240,7 @@ public:
     /// are restricted to the tag's FIX category; empty() on miss. Fresh scan
     /// from begin() — for many wire-order reads use the hinted overload.
     template <int Tag, fix_type Type>
-    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find(field_tag<Tag, Type>) const {
+    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find(field_tag<Tag, Type>) const noexcept {
         const_iterator it = begin();
         if (find_with_hint(Tag, it))
             return typed_value<Type>{it->value()};
@@ -248,8 +251,8 @@ public:
     /// int overload does), returns a category-restricted typed_value; empty() on
     /// miss. Reading tags in wire order through one cursor stays O(length).
     template <int Tag, fix_type Type>
-    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find_with_hint(field_tag<Tag, Type>,
-                                                                         const_iterator& it) const {
+    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find_with_hint(
+        field_tag<Tag, Type>, const_iterator& it) const noexcept {
         if (find_with_hint(Tag, it))
             return typed_value<Type>{it->value()};
         return typed_value<Type>{};
@@ -263,31 +266,37 @@ public:
      * as an int, or the group is empty. Call `group()` on a `group_entry` for
      * nested groups.
      */
-    group_view group(int count_tag, int first_tag_in_group) const;
+    group_view group(int count_tag, int first_tag_in_group) const noexcept;
 
     //@}
 
     /** \name Buffer Access */
     //@{
-    char const* buffer_begin() const { return buffer_; }
+    char const* buffer_begin() const noexcept { return buffer_; }
 
-    char const* buffer_end() const { return buffer_end_; }
+    char const* buffer_end() const noexcept { return buffer_end_; }
 
-    size_t buffer_size() const { return buffer_end_ - buffer_; }
+    size_t buffer_size() const noexcept { return buffer_end_ - buffer_; }
 
     /** \brief Start of the FIX message; equals `buffer_begin()` — a reader views
      *  exactly one message. */
-    char const* message_begin() const { return buffer_; }
+    char const* message_begin() const noexcept { return buffer_; }
 
-    /// Past-the-end of the message. \pre `is_valid()`; fires `NANOFIX_ASSERT` otherwise.
-    char const* message_end() const {
-        NANOFIX_ASSERT(is_valid_, "Cannot determine size of an invalid message.");
+    /// Past-the-end of the message.
+    /// \pre `is_complete() && is_valid()`; fires `NANOFIX_ASSERT` otherwise.
+    char const* message_end() const noexcept {
+        NANOFIX_ASSERT(usable_, "Cannot determine size of an incomplete or invalid message.");
+        if (!usable_) [[unlikely]]  // end_ internals are null
+            return buffer_;
         return end_.current_.value_.end_ + 1;
     }
 
-    /// Message size in bytes. \pre `is_valid()`; fires `NANOFIX_ASSERT` otherwise.
-    size_t message_size() const {
-        NANOFIX_ASSERT(is_valid_, "Cannot determine size of an invalid message.");
+    /// Message size in bytes.
+    /// \pre `is_complete() && is_valid()`; fires `NANOFIX_ASSERT` otherwise.
+    size_t message_size() const noexcept {
+        NANOFIX_ASSERT(usable_, "Cannot determine size of an incomplete or invalid message.");
+        if (!usable_) [[unlikely]]  // end_ internals are null
+            return 0;
         return end_.current_.value_.end_ - buffer_ + 1;
     }
 
@@ -299,13 +308,27 @@ private:
     // FIX framing limits, in bytes.
     static constexpr std::ptrdiff_t kMinBeginStringLen = 9;    // shortest "8=FIX.4.4"
     static constexpr std::ptrdiff_t kMaxBeginStringSpan = 11;  // longest BeginString before SOH
-    static constexpr std::size_t kMaxBodyLength =
-        999'999'999;  // 9-digit cap; bounds b+len before size_t wraps
+    // Overridable frame cap: a hostile BodyLength otherwise forces the caller
+    // to buffer toward 1 GB before the frame classifies. Must keep the 9-digit
+    // bound so b+len cannot wrap size_t.
+    static constexpr std::size_t kMaxBodyLength = NANOFIX_MAX_BODY_LENGTH;
+    static_assert(kMaxBodyLength <= 999'999'999,
+                  "NANOFIX_MAX_BODY_LENGTH must fit BodyLength's 9-digit cap");
     static constexpr std::ptrdiff_t kChecksumFieldBytes = 7;  // "10=XXX\x01"
     static constexpr std::ptrdiff_t kResyncMinBytes =
         10;  // need more than this to scan for next "8=FIX"
 
-    void init() {
+    void init() noexcept {
+        if (buffer_end_ - buffer_ < 2) [[unlikely]] {
+            is_complete_ = false;
+            return;
+        }
+        // Literal "8=" check: without it a garbage prefix whose SOH positions
+        // happen to line up parses as a valid message, and resync never runs.
+        if (buffer_[0] != '8' || buffer_[1] != '=') [[unlikely]] {
+            invalid(parse_error::begin_string_tag_missing);
+            return;
+        }
         // Need at least kMinBeginStringLen bytes before forming the pointer
         // below; otherwise the arithmetic itself is UB per [expr.add]/4.
         if (buffer_end_ - buffer_ < kMinBeginStringLen) [[unlikely]] {
@@ -331,12 +354,14 @@ private:
             ++b;
         }
 
-        if (buffer_end_ - b < 2) [[unlikely]] {
+        // 3 bytes ("\x01 9=") also keep the b += 3 pointer formation in bounds.
+        if (buffer_end_ - b < 3) [[unlikely]] {
             is_complete_ = false;
             return;
         }
-        // Spec: BeginString must be followed by BodyLength (tag 9).
-        if (b[1] != '9') [[unlikely]] {
+        // Spec: BeginString must be followed by BodyLength (tag 9). The '='
+        // rules out tags 90-99.
+        if (b[1] != '9' || b[2] != '=') [[unlikely]] {
             invalid(parse_error::body_length_tag_missing);
             return;
         }
@@ -368,8 +393,9 @@ private:
             return;
         }
 
-        // Spec: BodyLength must be followed by MsgType (tag 35).
-        if (*b != '3' || b[1] != '5') [[unlikely]] {
+        // Spec: BodyLength must be followed by MsgType (tag 35). The '='
+        // rules out tags 350-359.
+        if (*b != '3' || b[1] != '5' || b[2] != '=') [[unlikely]] {
             invalid(parse_error::msg_type_tag_missing);
             return;
         }
@@ -399,6 +425,13 @@ private:
             return;
         }
 
+        // Literal "10=" check: catches most BodyLength lies that still land
+        // on an SOH pair, instead of reading arbitrary bytes as the CheckSum.
+        if (std::memcmp(checksum, "10=", 3) != 0) [[unlikely]] {
+            invalid(parse_error::checksum_tag_missing);
+            return;
+        }
+
         begin_.buffer_ = b;
         begin_.current_.tag_ = tag::MsgType;
         b += 3;
@@ -420,6 +453,7 @@ private:
         end_.message_end_ = message_end;
 
         is_complete_ = true;
+        usable_ = true;
     }
 
     const_iterator end_;
@@ -427,11 +461,14 @@ private:
     char const* buffer_end_;
     bool is_complete_;
     bool is_valid_;
+    // is_complete_ && is_valid_, precomputed: the hot accessors (begin()/end()
+    // per find) assert on one byte instead of two.
+    bool usable_ = false;
     parse_error reason_ = parse_error::none;
     const_iterator begin_;
     char const* prefix_end_ = nullptr;
 
-    void invalid(parse_error reason) {
+    void invalid(parse_error reason) noexcept {
         is_complete_ = true;  // lets next_message_reader() resync past this frame
         is_valid_ = false;
         reason_ = reason;
@@ -453,14 +490,15 @@ public:
 
     bool empty() const noexcept { return begin_ == end_; }
 
-    [[nodiscard]] NANOFIX_ALWAYS_INLINE bool find_with_hint(int tag, const_iterator& it) const {
+    [[nodiscard]] NANOFIX_ALWAYS_INLINE bool find_with_hint(int tag,
+                                                            const_iterator& it) const noexcept {
         return nanofix::find_with_hint(begin_, end_, tag_equal(tag), it);
     }
 
     /// Typed lookup by a `tag::` handle; empty() on miss. Fresh scan from the
     /// entry's first field.
     template <int Tag, fix_type Type>
-    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find(field_tag<Tag, Type>) const {
+    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find(field_tag<Tag, Type>) const noexcept {
         const_iterator it = begin_;
         if (find_with_hint(Tag, it))
             return typed_value<Type>{it->value()};
@@ -469,15 +507,15 @@ public:
 
     /// Typed hinted lookup within this entry; carries the caller's cursor.
     template <int Tag, fix_type Type>
-    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find_with_hint(field_tag<Tag, Type>,
-                                                                         const_iterator& it) const {
+    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find_with_hint(
+        field_tag<Tag, Type>, const_iterator& it) const noexcept {
         if (find_with_hint(Tag, it))
             return typed_value<Type>{it->value()};
         return typed_value<Type>{};
     }
 
     /** \brief Nested group lookup within this entry. */
-    group_view group(int count_tag, int first_tag_in_group) const;
+    group_view group(int count_tag, int first_tag_in_group) const noexcept;
 
 private:
     friend class group_view;
@@ -500,8 +538,11 @@ public:
     bool empty() const noexcept { return count_ == 0; }
 
     // No range-for: a resumable iterator state machine adds per-entry branching this avoids.
+    /// Returns the number of entries visited. A return smaller than `size()`
+    /// means the wire carried fewer entries than the NoXxx count declared —
+    /// gateways wanting to reject on the mismatch compare the two.
     template <typename Fn>
-    NANOFIX_ALWAYS_INLINE void for_each(Fn&& fn) const noexcept {
+    NANOFIX_ALWAYS_INLINE std::size_t for_each(Fn&& fn) const noexcept {
         auto it = view_begin_;
         std::size_t remaining = count_;
         while (it != view_end_ && it->tag() != delimiter_)
@@ -514,6 +555,7 @@ public:
             fn(group_entry{entry_begin, it});
             --remaining;
         }
+        return count_ - remaining;
     }
 
 private:
@@ -538,7 +580,8 @@ private:
     int delimiter_;
 };
 
-NANOFIX_ALWAYS_INLINE group_view message_reader::group(int count_tag, int first_tag_in_group) const {
+NANOFIX_ALWAYS_INLINE group_view message_reader::group(int count_tag,
+                                                       int first_tag_in_group) const noexcept {
     auto it = begin();
     if (!nanofix::find_with_hint(begin(), end(), tag_equal(count_tag), it)) {
         return group_view::empty_view(end(), first_tag_in_group);
@@ -551,7 +594,8 @@ NANOFIX_ALWAYS_INLINE group_view message_reader::group(int count_tag, int first_
     return group_view(it, end(), count, first_tag_in_group);
 }
 
-NANOFIX_ALWAYS_INLINE group_view group_entry::group(int count_tag, int first_tag_in_group) const {
+NANOFIX_ALWAYS_INLINE group_view group_entry::group(int count_tag,
+                                                    int first_tag_in_group) const noexcept {
     auto it = begin_;
     if (!nanofix::find_with_hint(begin_, end_, tag_equal(count_tag), it)) {
         return group_view::empty_view(end_, first_tag_in_group);
@@ -566,12 +610,12 @@ NANOFIX_ALWAYS_INLINE group_view group_entry::group(int count_tag, int first_tag
 
 /** @cond EXCLUDE */
 namespace detail {
-bool is_tag_a_data_length(int tag);
+bool is_tag_a_data_length(int tag) noexcept;
 }
 
 /** @endcond */
 
-NANOFIX_ALWAYS_INLINE void message_reader_const_iterator::increment() {
+NANOFIX_ALWAYS_INLINE void message_reader_const_iterator::increment() noexcept {
     // Mirror message_reader::end_ so `it != r.end()` terminates.
     auto const set_at_end = [this]() noexcept {
         buffer_ = message_end_ - 7;
@@ -623,9 +667,11 @@ NANOFIX_ALWAYS_INLINE void message_reader_const_iterator::increment() {
             return;
         }
         ++p;
-        // Length must fit and be SOH-terminated, else we can't trust it to
-        // find the next field. `>=` keeps the p[data_len] probe in bounds.
-        if (data_len >= static_cast<std::size_t>(message_end_ - p) || p[data_len] != '\x01')
+        // Length must fit inside the body (not run into the trailer) and be
+        // SOH-terminated, else we can't trust it to find the next field. The
+        // signed `room` also keeps the p[data_len] probe in bounds.
+        std::ptrdiff_t const room = (message_end_ - message_reader::kChecksumFieldBytes) - p;
+        if (room <= 0 || data_len >= static_cast<std::size_t>(room) || p[data_len] != '\x01')
             [[unlikely]] {
             set_at_end();
             return;

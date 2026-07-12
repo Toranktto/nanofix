@@ -9,6 +9,7 @@
 #include <utility>
 #include <nanofix/detail/numeric.hpp>
 #include <nanofix/detail/simd.hpp>
+#include <nanofix/detail/time.hpp>
 
 namespace nanofix {
 
@@ -95,7 +96,7 @@ public:
     void push_back_header(char const* begin, char const* end) noexcept {
         if (error_) [[unlikely]]
             return;
-        if (body_length_) [[unlikely]] {
+        if (end < begin || body_length_) [[unlikely]] {
             error_ = true;
             return;
         }
@@ -128,6 +129,10 @@ public:
     }
 
     void push_back_string(int tag, char const* begin, char const* end) noexcept {
+        if (end < begin) [[unlikely]] {  // negative length would wrap the memcpy size
+            error_ = true;
+            return;
+        }
         std::ptrdiff_t const slen = end - begin;
         if (!open_field(tag, slen)) [[unlikely]]
             return;
@@ -154,6 +159,9 @@ public:
         *next_++ = '\x01';
     }
 
+    /// FIX Boolean: `true` -> `'Y'`, `false` -> `'N'` (mirrors `try_as_bool`).
+    void push_back_bool(int tag, bool v) noexcept { push_back_char(tag, v ? 'Y' : 'N'); }
+
     template <class Int_type>
     void push_back_int(int tag, Int_type n) noexcept {
         if (!open_field(tag, detail::max_ascii_chars<Int_type>)) [[unlikely]]
@@ -162,20 +170,32 @@ public:
         *next_++ = '\x01';
     }
 
+    /**
+     * \brief Append `tag=<mantissa * 10^exponent>\x01`. A negative exponent
+     * places a decimal point (`(50001, -2)` → `500.01`); a positive exponent
+     * appends that many zeros (`(5, 2)` → `500`); zero emits the mantissa
+     * verbatim.
+     */
     template <class Int_type>
     void push_back_decimal(int tag, Int_type mantissa, Int_type exponent) noexcept {
         if (error_) [[unlikely]]
             return;
         std::ptrdiff_t const remaining = buffer_end_ - next_;
         // dtoa writes max(mantissa-field, 1 - exponent) digits + a dot; a deep
-        // negative exponent outgrows the mantissa field. Reserve the wider
-        // (|exponent| in uint64, clamped) so it errors instead of overflowing.
+        // negative exponent outgrows the mantissa field, a positive one appends
+        // `exponent` zeros. Reserve the wider (in uint64, clamped) so it errors
+        // instead of overflowing.
         std::uint64_t positions = static_cast<std::uint64_t>(detail::max_ascii_chars<Int_type>);
         if (exponent < 0) {
             std::uint64_t const mag =
                 std::uint64_t{0} - static_cast<std::uint64_t>(static_cast<std::int64_t>(exponent));
             if (mag + 1u > positions)
                 positions = mag + 1u;
+            std::uint64_t const cap = static_cast<std::uint64_t>(remaining) + 1u;
+            if (positions > cap)
+                positions = cap;
+        } else if (exponent > 0) {
+            positions += static_cast<std::uint64_t>(exponent);  // trailing zeros
             std::uint64_t const cap = static_cast<std::uint64_t>(remaining) + 1u;
             if (positions > cap)
                 positions = cap;
@@ -192,7 +212,12 @@ public:
         *next_++ = '\x01';
     }
 
+    /// Rejects an out-of-range date (sticky error), see `valid_date`.
     void push_back_date(int tag, int y, int m, int d) noexcept {
+        if (!valid_date(y, m, d)) [[unlikely]] {
+            error_ = true;
+            return;
+        }
         if (!open_field(tag, 8)) [[unlikely]]
             return;
         detail::itoa_padded_unchecked(y, next_, next_ + 4);
@@ -204,7 +229,12 @@ public:
         *next_++ = '\x01';
     }
 
+    /// Rejects an out-of-range month/year (sticky error).
     void push_back_monthyear(int tag, int y, int m) noexcept {
+        if (!valid_monthyear(y, m)) [[unlikely]] {
+            error_ = true;
+            return;
+        }
         if (!open_field(tag, 6)) [[unlikely]]
             return;
         detail::itoa_padded_unchecked(y, next_, next_ + 4);
@@ -214,7 +244,13 @@ public:
         *next_++ = '\x01';
     }
 
+    /// Rejects an out-of-range time of day or fraction (sticky error, all
+    /// overloads); second 60 is legal (leap second).
     void push_back_timeonly(int tag, int h, int m, int s) noexcept {
+        if (!valid_time(h, m, s)) [[unlikely]] {
+            error_ = true;
+            return;
+        }
         if (!open_field(tag, 8)) [[unlikely]]
             return;
         detail::itoa_padded_unchecked(h, next_, next_ + 2);
@@ -229,6 +265,10 @@ public:
     }
 
     void push_back_timeonly(int tag, int h, int m, int s, int ms) noexcept {
+        if (!valid_time(h, m, s) || static_cast<unsigned>(ms) > 999u) [[unlikely]] {
+            error_ = true;
+            return;
+        }
         if (!open_field(tag, 12)) [[unlikely]]
             return;
         detail::itoa_padded_unchecked(h, next_, next_ + 2);
@@ -256,6 +296,10 @@ public:
     }
 
     void push_back_timeonly_nano(int tag, int h, int m, int s, int ns) noexcept {
+        if (!valid_time(h, m, s) || static_cast<unsigned>(ns) > 999'999'999u) [[unlikely]] {
+            error_ = true;
+            return;
+        }
         if (!open_field(tag, 18)) [[unlikely]]
             return;
         detail::itoa_padded_unchecked(h, next_, next_ + 2);
@@ -282,7 +326,14 @@ public:
                                 static_cast<int>(duration_cast<nanoseconds>(t % seconds(1)).count()));
     }
 
+    /// Rejects an out-of-range date, time, or fraction (sticky error, all
+    /// overloads); the epoch overloads inherit this via their part
+    /// decomposition.
     void push_back_timestamp(int tag, int y, int mo, int d, int h, int mi, int s) noexcept {
+        if (!valid_date(y, mo, d) || !valid_time(h, mi, s)) [[unlikely]] {
+            error_ = true;
+            return;
+        }
         if (!open_field(tag, 17)) [[unlikely]]
             return;
         detail::itoa_padded_unchecked(y, next_, next_ + 4);
@@ -304,6 +355,11 @@ public:
     }
 
     void push_back_timestamp(int tag, int y, int mo, int d, int h, int mi, int s, int ms) noexcept {
+        if (!valid_date(y, mo, d) || !valid_time(h, mi, s) || static_cast<unsigned>(ms) > 999u)
+            [[unlikely]] {
+            error_ = true;
+            return;
+        }
         if (!open_field(tag, 21)) [[unlikely]]
             return;
         detail::itoa_padded_unchecked(y, next_, next_ + 4);
@@ -335,6 +391,11 @@ public:
     }
 
     void push_back_timestamp_nano(int tag, int y, int mo, int d, int h, int mi, int s, int ns) noexcept {
+        if (!valid_date(y, mo, d) || !valid_time(h, mi, s) ||
+            static_cast<unsigned>(ns) > 999'999'999u) [[unlikely]] {
+            error_ = true;
+            return;
+        }
         if (!open_field(tag, 27)) [[unlikely]]
             return;
         detail::itoa_padded_unchecked(y, next_, next_ + 4);
@@ -409,7 +470,29 @@ public:
         *next_++ = '\x01';
     }
 
+    void push_back_data(int tag_data_length, int tag_data, std::string_view data) noexcept {
+        push_back_data(tag_data_length, tag_data, data.data(), data.data() + data.size());
+    }
+
 private:
+    // FIX field-width and calendar ranges for the date/time writers. Seconds
+    // allow 60 (leap second). Out-of-range parts would print non-digit bytes
+    // or silently wrap in itoa_padded_unchecked, so they are rejected up front.
+    // Unsigned wrap folds each pair of signed bounds into one compare.
+    static bool valid_date(int y, int m, int d) noexcept {
+        return static_cast<unsigned>(y) <= 9999u && static_cast<unsigned>(m - 1) <= 11u &&
+               static_cast<unsigned>(d - 1) <= 30u;
+    }
+
+    static bool valid_monthyear(int y, int m) noexcept {
+        return static_cast<unsigned>(y) <= 9999u && static_cast<unsigned>(m - 1) <= 11u;
+    }
+
+    static bool valid_time(int h, int mi, int s) noexcept {
+        return static_cast<unsigned>(h) <= 23u && static_cast<unsigned>(mi) <= 59u &&
+               static_cast<unsigned>(s) <= 60u;
+    }
+
     // Reserve room for `tag=<value_len bytes>\x01` and write the `tag=` prefix,
     // leaving next_ at the value. Returns false (and sets the sticky error_) if
     // it won't fit. value_len is the caller's known max value width.

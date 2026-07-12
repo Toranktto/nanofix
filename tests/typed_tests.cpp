@@ -6,6 +6,7 @@
 #include <nanofix.hpp>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <span>
 #include <string>
@@ -36,7 +37,70 @@ TEST(TypedValue, IntegerCategoryReadsInt) {
 
 TEST(TypedValue, CharacterCategoryReadsChar) {
     typed_value<fix_type::character> v(make_value("1"));
-    EXPECT_EQ(v.as_char_unchecked(), '1');
+    char c = 0;
+    ASSERT_TRUE(v.try_as_char(c));
+    EXPECT_EQ(c, '1');
+}
+
+TEST(TypedValue, DateAndMonthyearCategoriesRead) {
+    typed_value<fix_type::date> d(make_value("20260712"));
+    int y = 0, m = 0, day = 0;
+    ASSERT_TRUE(d.as_date(y, m, day));
+    EXPECT_EQ(y, 2026);
+    EXPECT_EQ(m, 7);
+    EXPECT_EQ(day, 12);
+
+    typed_value<fix_type::monthyear> my(make_value("202607"));
+    ASSERT_TRUE(my.as_monthyear(y, m));
+    EXPECT_EQ(y, 2026);
+    EXPECT_EQ(m, 7);
+}
+
+TEST(TypedValue, TimestampCategoryReadsTimestamp) {
+    typed_value<fix_type::timestamp> v(make_value("20260712-12:30:05.250"));
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0, ms = 0;
+    ASSERT_TRUE(v.as_timestamp(y, mo, d, h, mi, s, ms));
+    EXPECT_EQ(y, 2026);
+    EXPECT_EQ(ms, 250);
+
+    std::chrono::sys_time<std::chrono::nanoseconds> tp;
+    ASSERT_TRUE(v.as_timestamp_nano(tp));
+}
+
+TEST(TypedValue, TypedTierFullChronoValidation) {
+    // try_as_timestamp is the fully validating tier: the length-only
+    // as_timestamp accepts this garbage, the named try_as_* must not.
+    typed_value<fix_type::timestamp> bad(make_value("2026071X-12:30:05"));
+    std::chrono::sys_time<std::chrono::milliseconds> tp;
+    EXPECT_FALSE(bad.try_as_timestamp(tp));
+    typed_value<fix_type::timestamp> good(make_value("20260712-12:30:05"));
+    EXPECT_TRUE(good.try_as_timestamp(tp));
+
+    typed_value<fix_type::timeonly> t(make_value("12:30:05"));
+    std::chrono::nanoseconds dur{};
+    EXPECT_TRUE(t.try_as_timeonly(dur));
+
+    typed_value<fix_type::date> d(make_value("20260712"));
+    std::chrono::year_month_day ymd{};
+    EXPECT_TRUE(d.try_as_date(ymd));
+
+    typed_value<fix_type::monthyear> my(make_value("202607"));
+    std::chrono::year_month ym{};
+    EXPECT_TRUE(my.try_as_monthyear(ym));
+}
+
+TEST(TypedValue, TimeonlyCategoryReadsTimeonly) {
+    typed_value<fix_type::timeonly> v(make_value("12:30:05.250"));
+    int h = 0, m = 0, s = 0, ms = 0;
+    ASSERT_TRUE(v.as_timeonly(h, m, s, ms));
+    EXPECT_EQ(h, 12);
+    EXPECT_EQ(m, 30);
+    EXPECT_EQ(s, 5);
+    EXPECT_EQ(ms, 250);
+
+    int ns = 0;
+    ASSERT_TRUE(v.as_timeonly_nano(h, m, s, ns));
+    EXPECT_EQ(ns, 250000000);
 }
 
 TEST(TypedValue, UniversalAccessorsOnEveryCategory) {
@@ -84,6 +148,153 @@ static_assert(detect_try_as_decimal<typed_value<fix_type::decimal>>::value,
               "try_as_decimal must be enabled on a decimal-typed value");
 static_assert(detect_try_as_int<typed_value<fix_type::unknown>>::value,
               "all accessors enabled on unknown");
+
+namespace {
+template <class T, class = void>
+struct detect_as_date : std::false_type {};
+
+template <class T>
+struct detect_as_date<T,
+                      std::void_t<decltype(std::declval<T&>().as_date(
+                          std::declval<int&>(), std::declval<int&>(), std::declval<int&>()))>>
+    : std::true_type {};
+
+template <class T, class = void>
+struct detect_as_timeonly : std::false_type {};
+
+template <class T>
+struct detect_as_timeonly<
+    T,
+    std::void_t<decltype(std::declval<T&>().as_timeonly(
+        std::declval<int&>(), std::declval<int&>(), std::declval<int&>(), std::declval<int&>()))>>
+    : std::true_type {};
+
+template <class T, class = void>
+struct detect_as_monthyear : std::false_type {};
+
+template <class T>
+struct detect_as_monthyear<
+    T,
+    std::void_t<decltype(std::declval<T&>().as_monthyear(std::declval<int&>(), std::declval<int&>()))>>
+    : std::true_type {};
+
+template <class T, class = void>
+struct detect_as_timestamp : std::false_type {};
+
+template <class T>
+struct detect_as_timestamp<T,
+                           std::void_t<decltype(std::declval<T&>().as_timestamp(std::declval<int&>(),
+                                                                                std::declval<int&>(),
+                                                                                std::declval<int&>(),
+                                                                                std::declval<int&>(),
+                                                                                std::declval<int&>(),
+                                                                                std::declval<int&>(),
+                                                                                std::declval<int&>()))>>
+    : std::true_type {};
+
+template <class T, class = void>
+struct detect_try_as_timestamp : std::false_type {};
+
+template <class T>
+struct detect_try_as_timestamp<T,
+                               std::void_t<decltype(std::declval<T&>().try_as_timestamp(
+                                   std::declval<std::chrono::sys_time<std::chrono::nanoseconds>&>()))>>
+    : std::true_type {};
+
+template <class T, class = void>
+struct detect_try_as_timeonly : std::false_type {};
+
+template <class T>
+struct detect_try_as_timeonly<
+    T,
+    std::void_t<decltype(std::declval<T&>().try_as_timeonly(std::declval<std::chrono::nanoseconds&>()))>>
+    : std::true_type {};
+
+template <class T, class = void>
+struct detect_try_as_date : std::false_type {};
+
+template <class T>
+struct detect_try_as_date<
+    T,
+    std::void_t<decltype(std::declval<T&>().try_as_date(std::declval<std::chrono::year_month_day&>()))>>
+    : std::true_type {};
+
+template <class T, class = void>
+struct detect_try_as_monthyear : std::false_type {};
+
+template <class T>
+struct detect_try_as_monthyear<
+    T,
+    std::void_t<decltype(std::declval<T&>().try_as_monthyear(std::declval<std::chrono::year_month&>()))>>
+    : std::true_type {};
+
+template <class T, class = void>
+struct detect_as_char_unchecked : std::false_type {};
+
+template <class T>
+struct detect_as_char_unchecked<T, std::void_t<decltype(std::declval<T&>().as_char_unchecked())>>
+    : std::true_type {};
+}  // namespace
+
+// A UTCTimeOnly field must expose the time-of-day parse and must NOT expose
+// the date/epoch accessors (an 8-byte "12:30:05" passes as_date's length-only
+// validation and yields garbage with `true`).
+static_assert(detect_as_timeonly<typed_value<fix_type::timeonly>>::value,
+              "as_timeonly must be enabled on a timeonly-typed value");
+static_assert(!detect_as_date<typed_value<fix_type::timeonly>>::value,
+              "as_date must be disabled on a timeonly-typed value");
+static_assert(!detect_as_timeonly<typed_value<fix_type::timestamp>>::value,
+              "as_timeonly must be disabled on a timestamp-typed value");
+static_assert(detect_as_timeonly<typed_value<fix_type::unknown>>::value,
+              "all accessors enabled on unknown");
+
+// Date-carrying categories: LocalMktDate/UTCDateOnly fields are `date` (an
+// 8-byte YYYYMMDD), MonthYear fields are `monthyear`; a full 17+ byte
+// UTCTimestamp never passes as_date's length check, so as_date has no
+// business on the timestamp tier.
+static_assert(detect_as_date<typed_value<fix_type::date>>::value,
+              "as_date must be enabled on a date-typed value");
+static_assert(!detect_as_date<typed_value<fix_type::timestamp>>::value,
+              "as_date must be disabled on a timestamp-typed value");
+static_assert(detect_as_monthyear<typed_value<fix_type::monthyear>>::value,
+              "as_monthyear must be enabled on a monthyear-typed value");
+static_assert(!detect_as_monthyear<typed_value<fix_type::date>>::value,
+              "as_monthyear must be disabled on a date-typed value");
+static_assert(detect_as_timestamp<typed_value<fix_type::timestamp>>::value,
+              "as_timestamp must be enabled on a timestamp-typed value");
+static_assert(!detect_as_timestamp<typed_value<fix_type::date>>::value,
+              "as_timestamp must be disabled on a date-typed value");
+
+// Named fully-validating chrono accessors are gated per category, like their
+// length-only as_* siblings.
+static_assert(detect_try_as_timestamp<typed_value<fix_type::timestamp>>::value,
+              "try_as_timestamp must be enabled on a timestamp-typed value");
+static_assert(!detect_try_as_timestamp<typed_value<fix_type::timeonly>>::value,
+              "try_as_timestamp must be disabled on a timeonly-typed value");
+static_assert(detect_try_as_timeonly<typed_value<fix_type::timeonly>>::value,
+              "try_as_timeonly must be enabled on a timeonly-typed value");
+static_assert(!detect_try_as_timeonly<typed_value<fix_type::timestamp>>::value,
+              "try_as_timeonly must be disabled on a timestamp-typed value");
+static_assert(detect_try_as_date<typed_value<fix_type::date>>::value,
+              "try_as_date must be enabled on a date-typed value");
+static_assert(!detect_try_as_date<typed_value<fix_type::string>>::value,
+              "try_as_date must be disabled on a string-typed value");
+static_assert(detect_try_as_monthyear<typed_value<fix_type::monthyear>>::value,
+              "try_as_monthyear must be enabled on a monthyear-typed value");
+static_assert(!detect_try_as_monthyear<typed_value<fix_type::date>>::value,
+              "try_as_monthyear must be disabled on a date-typed value");
+static_assert(detect_try_as_timestamp<typed_value<fix_type::unknown>>::value &&
+                  detect_try_as_timeonly<typed_value<fix_type::unknown>>::value &&
+                  detect_try_as_date<typed_value<fix_type::unknown>>::value &&
+                  detect_try_as_monthyear<typed_value<fix_type::unknown>>::value,
+              "all accessors enabled on unknown");
+
+// Design rule (CLAUDE.md): no `_unchecked` on typed_value — the ungated
+// escape hatch is `.value()`.
+static_assert(!detect_as_char_unchecked<typed_value<fix_type::character>>::value,
+              "as_char_unchecked must not exist on typed_value");
+static_assert(detect_as_char_unchecked<field_value>::value,
+              "as_char_unchecked stays on the raw field_value tier");
 
 namespace {
 // Builds a NewOrderSingle with Symbol=MSFT, Price=50001, OrderQty=100 into buf;
@@ -174,8 +385,14 @@ TEST(TypedFind, WithFieldsTieredPathReturnsTypedValue) {
 TEST(TypedTags, GeneratedHandlesCarryCorrectCategory) {
     static_assert(tag::Price.type == fix_type::decimal);
     static_assert(tag::Symbol.type == fix_type::string);
-    static_assert(tag::OrderQty.type == fix_type::decimal);   // Qty
-    static_assert(tag::MsgSeqNum.type == fix_type::integer);  // SeqNum
+    static_assert(tag::OrderQty.type == fix_type::decimal);       // Qty
+    static_assert(tag::MsgSeqNum.type == fix_type::integer);      // SeqNum
+    static_assert(tag::MDEntryTime.type == fix_type::timeonly);   // UTCTimeOnly
+    static_assert(tag::SendingTime.type == fix_type::timestamp);  // UTCTimestamp
+    static_assert(tag::SettlDate.type == fix_type::date);         // LocalMktDate
+    static_assert(tag::MDEntryDate.type == fix_type::date);       // UTCDateOnly
+    static_assert(tag::MaturityMonthYear.type == fix_type::monthyear);
+    static_assert(tag::ExecInst.type == fix_type::string);  // MultipleCharValue
     static_assert(tag::Price.tag == 44);
     SUCCEED();
 }

@@ -52,7 +52,7 @@ struct length_tag_index {
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 inline constinit length_tag_index const g_length_tag_table{};
 
-NANOFIX_ALWAYS_INLINE bool is_tag_a_data_length(int tag) {
+NANOFIX_ALWAYS_INLINE bool is_tag_a_data_length(int tag) noexcept {
     return g_length_tag_table.contains(tag);
 }
 
@@ -104,9 +104,9 @@ public:
     indexed_message(indexed_message const&) = default;
     indexed_message& operator=(indexed_message const&) = default;
 
-    char const* message_begin() const { return msg_begin_; }
+    char const* message_begin() const noexcept { return msg_begin_; }
 
-    [[nodiscard]] std::size_t field_count() const { return tags_.size(); }
+    [[nodiscard]] std::size_t field_count() const noexcept { return tags_.size(); }
 
     /**
      * True if the index could not hold the whole message (buffer capacity
@@ -114,12 +114,12 @@ public:
      * `true` the index is empty and `find_with_hint()` always returns the
      * empty `field_value`; fall back to iterator-based access.
      */
-    [[nodiscard]] bool truncated() const { return truncated_; }
+    [[nodiscard]] bool truncated() const noexcept { return truncated_; }
 
     /// \warning Unchecked: `i` must be `< field_count()` (as is `value_at`).
-    int tag_at(std::size_t i) const { return tags_[i]; }
+    int tag_at(std::size_t i) const noexcept { return tags_[i]; }
 
-    field_value value_at(std::size_t i) const {
+    field_value value_at(std::size_t i) const noexcept {
         if (msg_begin_ == nullptr) [[unlikely]]  // empty / unbuilt index
             return {};
         std::uint64_t const pl = pos_len_[i];
@@ -139,7 +139,7 @@ public:
      * occurrence at-or-after `hint` — for a tag repeated across group entries
      * the result depends on `hint`. Use `has(tag)` for presence-only.
      */
-    inline field_value find_with_hint(int tag, std::size_t& hint) const {
+    inline field_value find_with_hint(int tag, std::size_t& hint) const noexcept {
         std::size_t const n = tags_.size();
         if (hint > n)
             hint = 0;
@@ -160,7 +160,7 @@ public:
 
     /// Typed lookup by a `tag::` handle; empty() on miss. Fresh scan (hint 0).
     template <int Tag, fix_type Type>
-    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find(field_tag<Tag, Type>) const {
+    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find(field_tag<Tag, Type>) const noexcept {
         std::size_t hint = 0;
         return typed_value<Type>{find_with_hint(Tag, hint)};
     }
@@ -168,20 +168,20 @@ public:
     /// Typed hinted lookup; carries the caller's `hint` index (advanced as the
     /// int overload does), returns a category-restricted typed_value.
     template <int Tag, fix_type Type>
-    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find_with_hint(field_tag<Tag, Type>,
-                                                                         std::size_t& hint) const {
+    [[nodiscard]] NANOFIX_ALWAYS_INLINE typed_value<Type> find_with_hint(
+        field_tag<Tag, Type>, std::size_t& hint) const noexcept {
         return typed_value<Type>{find_with_hint(Tag, hint)};
     }
 
-    [[nodiscard]] bool has(int tag) const {
+    [[nodiscard]] bool has(int tag) const noexcept {
         return ::nanofix::detail::find_tag_in_index(tags_.data(), tags_.size(), tag) != tags_.size();
     }
 
 private:
     template <std::size_t N>
-    friend indexed_message build_field_index(message_reader const&, field_index_buffer<N>&);
+    friend indexed_message build_field_index(message_reader const&, field_index_buffer<N>&) noexcept;
     template <std::size_t N>
-    friend indexed_message build_field_index(group_entry const&, field_index_buffer<N>&);
+    friend indexed_message build_field_index(group_entry const&, field_index_buffer<N>&) noexcept;
 
     char const* msg_begin_ = nullptr;
     std::span<int const> tags_;
@@ -193,9 +193,9 @@ private:
 // truncated() semantics match the iterator path.
 template <std::size_t N>
 NANOFIX_HOT indexed_message build_field_index(message_reader const& r,
-                                              field_index_buffer<N>& idx_buffer) {
+                                              field_index_buffer<N>& idx_buffer) noexcept {
     indexed_message out;
-    if (!r.is_valid())
+    if (!r.is_complete() || !r.is_valid())
         return out;
     out.msg_begin_ = r.message_begin();
     if (r.message_size() > indexed_message::kMaxIndexableMessageBytes) [[unlikely]] {
@@ -273,7 +273,10 @@ NANOFIX_HOT indexed_message build_field_index(message_reader const& r,
             if (p >= stop) [[unlikely]]
                 break;
             ++p;
-            if (data_len > static_cast<std::size_t>(stop - p)) [[unlikely]]
+            // Mirror the iterator: the length must fit inside the body and be
+            // SOH-terminated, else the offset cannot be trusted — resuming
+            // mid-value would fabricate fields. `>=` keeps the probe in bounds.
+            if (data_len >= static_cast<std::size_t>(stop - p) || p[data_len] != '\x01') [[unlikely]]
                 break;
             char const* const dvb = p;
             char const* const dve = p + data_len;
@@ -295,7 +298,8 @@ NANOFIX_HOT indexed_message build_field_index(message_reader const& r,
 
 /** Group-entry overload. Offsets are packed against the entry's first byte. */
 template <std::size_t N>
-indexed_message build_field_index(group_entry const& entry, field_index_buffer<N>& idx_buffer) {
+indexed_message build_field_index(group_entry const& entry,
+                                  field_index_buffer<N>& idx_buffer) noexcept {
     indexed_message out;
     auto it = entry.begin();
     auto end = entry.end();
@@ -372,10 +376,14 @@ private:
 class iter_fields {
 public:
     explicit iter_fields(message_reader const& r) noexcept
-        : r_(r), it_(r.is_valid() ? r.begin() : message_reader_const_iterator{}) {}
+        : r_(r),
+          usable_(r.is_complete() && r.is_valid()),
+          it_(usable_ ? r.begin() : message_reader_const_iterator{}) {}
 
     /** \brief Value for `tag`, or an empty `field_value` if absent. */
     [[nodiscard]] NANOFIX_ALWAYS_INLINE field_value find(int tag) noexcept {
+        if (!usable_) [[unlikely]]  // incomplete/invalid reader: every lookup misses
+            return {};
         message_reader_const_iterator it = it_;
         if (r_.find_with_hint(tag, it)) {
             it_ = it;
@@ -392,6 +400,7 @@ public:
 
 private:
     message_reader r_;
+    bool usable_;
     message_reader_const_iterator it_{};
 };
 

@@ -5,6 +5,30 @@
 #include <cstdint>
 #include <nanofix/detail/config.hpp>
 
+// SIMD capability detection and the AVX2 hard baseline live here, next to the
+// only code that uses them; scalar headers stay intrinsics-free. Every SIMD
+// consumer (reader/writer/index) includes this header, so the baseline #error
+// still fires on any misconfigured x86-64 TU that can reach vector code.
+#if !defined(NANOFIX_DISABLE_SIMD)
+#if defined(__aarch64__) || defined(_M_ARM64)
+#define NANOFIX_HAS_NEON 1
+#endif
+#if defined(__x86_64__) || defined(_M_X64)
+#if !defined(__AVX2__)
+#error \
+    "nanofix requires AVX2 on x86-64 (Haswell+, 2013). Compile with -mavx2 / -march=haswell (MSVC: /arch:AVX2) -- the nanofix CMake/Conan targets add it -- or define NANOFIX_DISABLE_SIMD=1 for scalar-only."
+#endif
+#define NANOFIX_HAS_AVX2 1
+#endif
+#endif
+
+#ifdef NANOFIX_HAS_NEON
+#include <arm_neon.h>
+#endif
+#ifdef NANOFIX_HAS_AVX2
+#include <immintrin.h>
+#endif
+
 namespace nanofix {
 
 /* @cond EXCLUDE */

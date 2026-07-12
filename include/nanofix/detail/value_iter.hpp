@@ -7,11 +7,14 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <ratio>
 #include <span>
 #include <string_view>
 #include <utility>
+#include <nanofix/detail/diagnostics.hpp>
 #include <nanofix/detail/fields.hpp>
 #include <nanofix/detail/numeric.hpp>
+#include <nanofix/detail/time.hpp>
 #include <nanofix/detail/typed.hpp>
 #include <nanofix/detail/writer.hpp>
 
@@ -21,8 +24,7 @@ namespace nanofix {
  * \brief Carrier for a decimal parsed as `mantissa * 10^exponent`.
  *
  * A plain aggregate, not an arithmetic type — no operators, no scaling. It
- * lets a decimal ride the single-value `try_as` / `as_unchecked` generic; the
- * named two-out-param `try_as_decimal` / `as_decimal_unchecked` are unchanged.
+ * lets a decimal ride the single-value `try_as` / `as_unchecked` generic.
  *
  * \tparam Int_type Signed integer type for both fields (default `int64_t`).
  */
@@ -39,21 +41,12 @@ struct is_decimal_parts : std::false_type {};
 template <typename Int_type>
 struct is_decimal_parts<decimal_parts<Int_type>> : std::true_type {};
 
-// Scalar SOH search. Every field-level caller (iterator increment, reader-init
-// MsgType frame) is a serial scan over a short FIX value, where a vector load's
-// lane extract stalls the critical path and scalar byte compares win — measured
-// per call site (a vector form at the increment scan regressed BM_ReadMessageScan
-// ~17%). Bulk whole-message framing instead vectorizes via find_all_soh (simd.hpp).
 NANOFIX_ALWAYS_INLINE char const* find_soh(char const* begin, char const* end) noexcept {
     while (begin < end && *begin != '\x01')
         ++begin;
     return begin;
 }
 
-// Accumulate an ASCII tag number until '=' (or, when StopOnSoh, an empty-value
-// SOH). No overflow guard by design — see message_reader_const_iterator::
-// increment. StopOnSoh is a template parameter so the SOH test folds away in
-// the data-length continuation scan that can't see a bare SOH here.
 template <bool StopOnSoh>
 NANOFIX_ALWAYS_INLINE char const* scan_tag_digits(char const* p,
                                                   char const* end,
@@ -82,12 +75,12 @@ public:
 
     constexpr field_value(char const* b, char const* e) noexcept : begin_(b), end_(e) {}
 
-    char const* begin() const { return begin_; }
+    char const* begin() const noexcept { return begin_; }
 
-    char const* end() const { return end_; }
+    char const* end() const noexcept { return end_; }
 
     /** \brief Size of the field value, in bytes. */
-    size_t size() const { return end_ - begin_; }
+    size_t size() const noexcept { return end_ - begin_; }
 
     /** \brief The field value as a byte span (may contain embedded SOH/NUL).
      *  `begin()`/`end()` give the same bytes for iteration. */
@@ -150,7 +143,7 @@ public:
     /** \name String Conversion Methods */
     //@{
 
-    [[nodiscard]] std::string_view as_string_view() const {
+    [[nodiscard]] std::string_view as_string_view() const noexcept {
         return std::string_view(begin(), size());
     }
 
@@ -162,7 +155,7 @@ public:
      * a validated reader this cannot fire; untrusted callers must
      * check `size() > 0` first.
      */
-    [[nodiscard]] char as_char_unchecked() const { return *begin(); }
+    [[nodiscard]] char as_char_unchecked() const noexcept { return *begin(); }
 
     /**
      * \brief Validating single-character read. A FIX `char` field is exactly
@@ -208,7 +201,7 @@ public:
      * only — any non-`'Y'` byte (including `'N'`) reads as false, and an empty
      * value is undefined behavior (reads `*begin()`).
      */
-    [[nodiscard]] bool as_bool_unchecked() const { return as_char_unchecked() == 'Y'; }
+    [[nodiscard]] bool as_bool_unchecked() const noexcept { return as_char_unchecked() == 'Y'; }
 
     //@}
 
@@ -239,8 +232,8 @@ public:
      * \param[out] exponent Decimal exponent, `<= 0`.
      */
     template <typename Int_type>
-    void as_decimal_unchecked(Int_type& mantissa, Int_type& exponent) const {
-        detail::atod<Int_type>(begin(), end(), mantissa, exponent);
+    void as_decimal_unchecked(Int_type& mantissa, Int_type& exponent) const noexcept {
+        detail::atod_unchecked<Int_type>(begin(), end(), mantissa, exponent);
     }
 
     /**
@@ -274,20 +267,19 @@ public:
      *
      * Wire-untrusted values must use `try_as_int` instead. This function
      * exists for the hot path after the caller has externally validated
-     * the byte range. Marked `NANOFIX_HOT` because it appears in
-     * parser-inner-loop call sites (`CheckSum`, `BodyLength`,
-     * `MsgSeqNum`, post-validated tag accumulators).
+     * the byte range. Marked `NANOFIX_HOT` for consumer inner-loop reads
+     * of externally validated fields (e.g. `MsgSeqNum`).
      *
      * \tparam Int_type Signed or unsigned integer type.
      * \return The parsed value. Undefined for inputs that violate the
      * preconditions above.
      */
     template <typename Int_type>
-    [[nodiscard]] NANOFIX_HOT Int_type as_int_unchecked() const {
+    [[nodiscard]] NANOFIX_HOT Int_type as_int_unchecked() const noexcept {
         if constexpr (std::numeric_limits<Int_type>::is_signed)
-            return detail::atoi<Int_type>(begin(), end());
+            return detail::atoi_unchecked<Int_type>(begin(), end());
         else
-            return detail::atou<Int_type>(begin(), end());
+            return detail::atou_unchecked<Int_type>(begin(), end());
     }
 
     /**
@@ -316,7 +308,16 @@ public:
     /**
      * \brief Validating conversion dispatched on the out-param type — a facade
      * over the named `try_as_*`. `T` is `decimal_parts<Int>`, `bool`, `char`,
-     * `std::string_view`, or an integral. Out-param set only on success.
+     * `std::string_view`, an integral, or a chrono type:
+     * `std::chrono::time_point` (UTCTimestamp), `std::chrono::duration`
+     * (UTCTimeOnly), `std::chrono::year_month_day` (LocalMktDate/UTCDateOnly),
+     * `std::chrono::year_month` (MonthYear). Out-param set only on success.
+     *
+     * Chrono types route to the fully validating `try_as_timestamp` /
+     * `try_as_timeonly` / `try_as_date` / `try_as_monthyear` (see those for
+     * the precision policy). For `string_view`, a missed lookup
+     * (the null `field_value` sentinel) returns false; a present-but-empty
+     * value returns true with an empty view.
      * \return True on success, false otherwise.
      */
     template <typename T>
@@ -326,27 +327,69 @@ public:
         } else if constexpr (std::is_same_v<T, bool>) {
             return try_as_bool(out);
         } else if constexpr (std::is_same_v<T, std::string_view>) {
+            if (begin_ == nullptr) [[unlikely]]  // missed lookup, not an empty value
+                return false;
             out = as_string_view();
             return true;
         } else if constexpr (std::is_same_v<T, char>) {
             return try_as_char(out);
         } else if constexpr (std::is_integral_v<T>) {
             return try_as_int(out);
+        } else if constexpr (detail::is_time_point<T>::value) {
+            if constexpr (std::ratio_less_v<typename T::duration::period, std::milli>)
+                return detail::try_atotimepoint_nano_strict(begin(), end(), out);
+            else
+                return detail::try_atotimepoint_strict(begin(), end(), out);
+        } else if constexpr (detail::is_duration<T>::value) {
+            int h, m, sec, frac;
+            if constexpr (std::ratio_less_v<typename T::period, std::milli>) {
+                if (!detail::try_atotime_nano_strict(begin(), end(), h, m, sec, frac))
+                    return false;
+                out = std::chrono::hours(h) + std::chrono::minutes(m) + std::chrono::seconds(sec) +
+                      std::chrono::nanoseconds(frac);
+            } else {
+                if (!detail::try_atotime_strict(begin(), end(), h, m, sec, frac))
+                    return false;
+                out = std::chrono::hours(h) + std::chrono::minutes(m) + std::chrono::seconds(sec) +
+                      std::chrono::milliseconds(frac);
+            }
+            return true;
+        } else if constexpr (std::is_same_v<T, std::chrono::year_month_day>) {
+            int y, m, d;
+            if (!detail::try_atodate_strict(begin(), end(), y, m, d))
+                return false;
+            out = std::chrono::year_month_day{std::chrono::year{y},
+                                              std::chrono::month{static_cast<unsigned>(m)},
+                                              std::chrono::day{static_cast<unsigned>(d)}};
+            return true;
+        } else if constexpr (std::is_same_v<T, std::chrono::year_month>) {
+            if (size() != 6 || !detail::all_digits(begin(), 6))
+                return false;
+            int const y = detail::atoi_unchecked<int>(begin(), begin() + 4);
+            int const m = detail::atoi_unchecked<int>(begin() + 4, begin() + 6);
+            if (m < 1 || m > 12)
+                return false;
+            out = std::chrono::year_month{std::chrono::year{y},
+                                          std::chrono::month{static_cast<unsigned>(m)}};
+            return true;
         } else {
             static_assert(detail::is_decimal_parts<T>::value,
                           "try_as<T>: unsupported type; T must be decimal_parts<Int>, bool, an "
-                          "integral, char, or std::string_view");
+                          "integral, char, std::string_view, or a chrono time_point / duration / "
+                          "year_month_day / year_month");
             return false;
         }
     }
 
     /**
      * \brief Non-validating counterpart of `try_as`, returned by value. Same
-     * `T` set; trusted-input only — undefined output on malformed bytes, as the
-     * `as_*_unchecked` methods it wraps.
+     * `T` set; trusted-input only — undefined output on malformed bytes, as
+     * the `as_*_unchecked` methods it wraps. The chrono conversions keep the
+     * named `as_*` accessors' validation (length; plus the [1970, 2200] year
+     * gate for time_points) and return an epoch/zero placeholder on failure.
      */
     template <typename T>
-    [[nodiscard]] NANOFIX_HOT T as_unchecked() const {
+    [[nodiscard]] NANOFIX_HOT T as_unchecked() const noexcept {
         if constexpr (detail::is_decimal_parts<T>::value) {
             T d{};
             as_decimal_unchecked(d.mantissa, d.exponent);
@@ -359,10 +402,36 @@ public:
             return as_char_unchecked();
         } else if constexpr (std::is_integral_v<T>) {
             return as_int_unchecked<T>();
+        } else if constexpr (detail::is_time_point<T>::value) {
+            T tp{};
+            if constexpr (std::ratio_less_v<typename T::duration::period, std::milli>)
+                (void)as_timestamp_nano(tp);
+            else
+                (void)as_timestamp(tp);
+            return tp;
+        } else if constexpr (detail::is_duration<T>::value) {
+            T dur{};
+            if constexpr (std::ratio_less_v<typename T::period, std::milli>)
+                (void)as_timeonly_nano(dur);
+            else
+                (void)as_timeonly(dur);
+            return dur;
+        } else if constexpr (std::is_same_v<T, std::chrono::year_month_day>) {
+            int y{}, m{1}, d{1};
+            (void)as_date(y, m, d);
+            return std::chrono::year_month_day{std::chrono::year{y},
+                                               std::chrono::month{static_cast<unsigned>(m)},
+                                               std::chrono::day{static_cast<unsigned>(d)}};
+        } else if constexpr (std::is_same_v<T, std::chrono::year_month>) {
+            int y{}, m{1};
+            (void)as_monthyear(y, m);
+            return std::chrono::year_month{std::chrono::year{y},
+                                           std::chrono::month{static_cast<unsigned>(m)}};
         } else {
             static_assert(detail::is_decimal_parts<T>::value,
                           "as_unchecked<T>: unsupported type; T must be decimal_parts<Int>, bool, "
-                          "an integral, char, or std::string_view");
+                          "an integral, char, std::string_view, or a chrono time_point / duration "
+                          "/ year_month_day / year_month");
         }
     }
 
@@ -388,7 +457,7 @@ public:
      * \brief Parse a MonthYear `YYYYMM` field.
      *
      * Validates length only (6 bytes). The 6 bytes are then parsed with
-     * the non-validating `atoi`, so non-digit content yields undefined
+     * the non-validating `atoi_unchecked`, so non-digit content yields undefined
      * output but cannot read past the field. Callers receiving values
      * from untrusted sources should additionally range-check
      * `month ∈ [1, 12]` and `year` against a venue-plausible band after
@@ -400,8 +469,8 @@ public:
         if (end() - begin() != 6)
             return false;
 
-        year = detail::atoi<int>(begin(), begin() + 4);
-        month = detail::atoi<int>(begin() + 4, begin() + 6);
+        year = detail::atoi_unchecked<int>(begin(), begin() + 4);
+        month = detail::atoi_unchecked<int>(begin() + 4, begin() + 6);
 
         return true;
     }
@@ -467,7 +536,77 @@ public:
 
     //@}
 
-    /** \brief UTCTimestamp as signed epoch nanoseconds, or nullopt. */
+    /** \name Fully Validating Chrono Conversion Methods
+     *  Unlike the length-only `as_*` accessors above, these check digits,
+     *  separators, and calendar/clock ranges (leap-second `:60` accepted) —
+     *  the `try_*` contract, for chrono out-params. `try_as<T>` dispatches
+     *  here for chrono `T`. */
+    //@{
+
+    /**
+     * \brief Fully validating UTCTimestamp parse into a
+     * `std::chrono::time_point`. A sub-millisecond-precision `Duration` reads
+     * the `.ssssss`/`.sssssssss` wire formats; millisecond-or-coarser rejects
+     * sub-ms wire rather than silently truncating. Years outside [1970, 2200]
+     * reject (epoch math would overflow int64).
+     */
+    template <typename Clock, typename Duration>
+    [[nodiscard]] bool try_as_timestamp(std::chrono::time_point<Clock, Duration>& tp) const noexcept {
+        if constexpr (std::ratio_less_v<typename Duration::period, std::milli>)
+            return detail::try_atotimepoint_nano_strict(begin(), end(), tp);
+        else
+            return detail::try_atotimepoint_strict(begin(), end(), tp);
+    }
+
+    /** \brief Fully validating UTCTimeOnly parse into a
+     *  `std::chrono::duration`; precision policy as in `try_as_timestamp`. */
+    template <typename Rep, typename Period>
+    [[nodiscard]] bool try_as_timeonly(std::chrono::duration<Rep, Period>& dur) const noexcept {
+        int h, m, sec, frac;
+        if constexpr (std::ratio_less_v<Period, std::milli>) {
+            if (!detail::try_atotime_nano_strict(begin(), end(), h, m, sec, frac))
+                return false;
+            dur = std::chrono::hours(h) + std::chrono::minutes(m) + std::chrono::seconds(sec) +
+                  std::chrono::nanoseconds(frac);
+        } else {
+            if (!detail::try_atotime_strict(begin(), end(), h, m, sec, frac))
+                return false;
+            dur = std::chrono::hours(h) + std::chrono::minutes(m) + std::chrono::seconds(sec) +
+                  std::chrono::milliseconds(frac);
+        }
+        return true;
+    }
+
+    /** \brief Fully validating LocalMktDate/UTCDateOnly parse (8 digits,
+     *  calendar range) into a `std::chrono::year_month_day`. */
+    [[nodiscard]] bool try_as_date(std::chrono::year_month_day& out) const noexcept {
+        int y, m, d;
+        if (!detail::try_atodate_strict(begin(), end(), y, m, d))
+            return false;
+        out = std::chrono::year_month_day{std::chrono::year{y},
+                                          std::chrono::month{static_cast<unsigned>(m)},
+                                          std::chrono::day{static_cast<unsigned>(d)}};
+        return true;
+    }
+
+    /** \brief Fully validating MonthYear parse (6 digits, month range) into a
+     *  `std::chrono::year_month`. */
+    [[nodiscard]] bool try_as_monthyear(std::chrono::year_month& out) const noexcept {
+        if (size() != 6 || !detail::all_digits(begin(), 6))
+            return false;
+        int const y = detail::atoi_unchecked<int>(begin(), begin() + 4);
+        int const m = detail::atoi_unchecked<int>(begin() + 4, begin() + 6);
+        if (m < 1 || m > 12)
+            return false;
+        out = std::chrono::year_month{std::chrono::year{y},
+                                      std::chrono::month{static_cast<unsigned>(m)}};
+        return true;
+    }
+
+    //@}
+
+    /** \brief UTCTimestamp as signed epoch nanoseconds, or nullopt. Years
+     *  outside [1970, 2200] yield nullopt (epoch math would overflow int64). */
     [[nodiscard]] std::optional<std::int64_t> as_epoch_nanos() const noexcept {
         std::chrono::sys_time<std::chrono::nanoseconds> tp;
         if (!detail::atotimepoint_nano(begin(), end(), tp))
@@ -479,7 +618,8 @@ public:
      * \brief UTCTimestamp as signed epoch milliseconds, or nullopt.
      * Millisecond wire precision at most: a `.ssssss`/`.sssssssss` timestamp
      * returns nullopt rather than silently truncating — use
-     * `as_epoch_nanos` for those.
+     * `as_epoch_nanos` for those. Years outside [1970, 2200] yield nullopt
+     * (epoch math would overflow int64).
      */
     [[nodiscard]] std::optional<std::int64_t> as_epoch_millis() const noexcept {
         std::chrono::sys_time<std::chrono::milliseconds> tp;
@@ -493,7 +633,8 @@ public:
 
     /**
      * \brief Parse a UTCTimestamp field into a `std::chrono::time_point`.
-     * Uses Howard Hinnant's proleptic Gregorian algorithms (see
+     * Years outside [1970, 2200] return false (epoch math would overflow
+     * int64). Uses Howard Hinnant's proleptic Gregorian algorithms (see
      * `http://howardhinnant.github.io/date_algorithms.html`).
      */
     template <typename Clock, typename Duration>
@@ -503,7 +644,7 @@ public:
 
     /**
      * \brief Parse a UTCTimestamp field with nanosecond precision into a
-     * `std::chrono::time_point`.
+     * `std::chrono::time_point`. Year range as in the millisecond overload.
      */
     template <typename Clock, typename Duration>
     [[nodiscard]] bool as_timestamp_nano(std::chrono::time_point<Clock, Duration>& tp) const {
@@ -549,13 +690,13 @@ private:
 };
 
 /// A field_value whose checked accessors are restricted to its FIX category.
-/// `bytes()`, `as_string_view()`, `as_char_unchecked()`, `empty()`, `value()` are
-/// universal (callable for any category); `try_as_int` / `try_as_decimal` /
-/// `try_as_char` / `try_as_bool` / time accessors compile only for the matching
-/// category (or `unknown`). For
-/// the ungated, any-tag unchecked path go through `value()`
-/// (`v.value().as_int_unchecked<T>()`). Same size as field_value (one member,
-/// two pointers) — zero runtime overhead.
+/// `bytes()`, `as_string_view()`, `empty()`, `value()` are universal (callable
+/// for any category); `try_as_int` / `try_as_decimal` / `try_as_char` /
+/// `try_as_bool` / date-time accessors compile only for the matching category
+/// (or `unknown`). No `_unchecked` methods here: for the ungated, any-tag
+/// unchecked path go through `value()` (`v.value().as_int_unchecked<T>()`).
+/// Same size as field_value (one member, two pointers) — zero runtime
+/// overhead.
 template <fix_type Type>
 class typed_value {
 public:
@@ -567,9 +708,7 @@ public:
 
     [[nodiscard]] std::span<char const> bytes() const noexcept { return v_.bytes(); }
 
-    [[nodiscard]] std::string_view as_string_view() const { return v_.as_string_view(); }
-
-    [[nodiscard]] char as_char_unchecked() const { return v_.as_char_unchecked(); }
+    [[nodiscard]] std::string_view as_string_view() const noexcept { return v_.as_string_view(); }
 
     [[nodiscard]] bool empty() const noexcept { return v_.empty(); }
 
@@ -604,9 +743,48 @@ public:
     }
 
     [[nodiscard]] bool as_date(int& year, int& month, int& day) const noexcept
-        requires(Type == fix_type::timestamp || Type == fix_type::unknown)
+        requires(Type == fix_type::date || Type == fix_type::unknown)
     {
         return v_.as_date(year, month, day);
+    }
+
+    [[nodiscard]] bool as_monthyear(int& year, int& month) const noexcept
+        requires(Type == fix_type::monthyear || Type == fix_type::unknown)
+    {
+        return v_.as_monthyear(year, month);
+    }
+
+    [[nodiscard]] bool as_timestamp(int& year,
+                                    int& month,
+                                    int& day,
+                                    int& hour,
+                                    int& minute,
+                                    int& second,
+                                    int& millisecond) const noexcept
+        requires(Type == fix_type::timestamp || Type == fix_type::unknown)
+    {
+        return v_.as_timestamp(year, month, day, hour, minute, second, millisecond);
+    }
+
+    [[nodiscard]] bool as_timestamp_nano(
+        int& year, int& month, int& day, int& hour, int& minute, int& second, int& nanosecond) const noexcept
+        requires(Type == fix_type::timestamp || Type == fix_type::unknown)
+    {
+        return v_.as_timestamp_nano(year, month, day, hour, minute, second, nanosecond);
+    }
+
+    template <typename Clock, typename Duration>
+    [[nodiscard]] bool as_timestamp(std::chrono::time_point<Clock, Duration>& tp) const noexcept
+        requires(Type == fix_type::timestamp || Type == fix_type::unknown)
+    {
+        return v_.as_timestamp(tp);
+    }
+
+    template <typename Clock, typename Duration>
+    [[nodiscard]] bool as_timestamp_nano(std::chrono::time_point<Clock, Duration>& tp) const noexcept
+        requires(Type == fix_type::timestamp || Type == fix_type::unknown)
+    {
+        return v_.as_timestamp_nano(tp);
     }
 
     [[nodiscard]] std::optional<std::int64_t> as_epoch_millis() const noexcept
@@ -621,6 +799,58 @@ public:
         return v_.as_epoch_nanos();
     }
 
+    [[nodiscard]] bool as_timeonly(int& hour, int& minute, int& second, int& millisecond) const noexcept
+        requires(Type == fix_type::timeonly || Type == fix_type::unknown)
+    {
+        return v_.as_timeonly(hour, minute, second, millisecond);
+    }
+
+    [[nodiscard]] bool as_timeonly_nano(int& hour, int& minute, int& second, int& nanosecond) const noexcept
+        requires(Type == fix_type::timeonly || Type == fix_type::unknown)
+    {
+        return v_.as_timeonly_nano(hour, minute, second, nanosecond);
+    }
+
+    template <typename Rep, typename Period>
+    [[nodiscard]] bool as_timeonly(std::chrono::duration<Rep, Period>& dur) const
+        requires(Type == fix_type::timeonly || Type == fix_type::unknown)
+    {
+        return v_.as_timeonly(dur);
+    }
+
+    template <typename Rep, typename Period>
+    [[nodiscard]] bool as_timeonly_nano(std::chrono::duration<Rep, Period>& dur) const
+        requires(Type == fix_type::timeonly || Type == fix_type::unknown)
+    {
+        return v_.as_timeonly_nano(dur);
+    }
+
+    template <typename Clock, typename Duration>
+    [[nodiscard]] bool try_as_timestamp(std::chrono::time_point<Clock, Duration>& tp) const noexcept
+        requires(Type == fix_type::timestamp || Type == fix_type::unknown)
+    {
+        return v_.try_as_timestamp(tp);
+    }
+
+    template <typename Rep, typename Period>
+    [[nodiscard]] bool try_as_timeonly(std::chrono::duration<Rep, Period>& dur) const noexcept
+        requires(Type == fix_type::timeonly || Type == fix_type::unknown)
+    {
+        return v_.try_as_timeonly(dur);
+    }
+
+    [[nodiscard]] bool try_as_date(std::chrono::year_month_day& out) const noexcept
+        requires(Type == fix_type::date || Type == fix_type::unknown)
+    {
+        return v_.try_as_date(out);
+    }
+
+    [[nodiscard]] bool try_as_monthyear(std::chrono::year_month& out) const noexcept
+        requires(Type == fix_type::monthyear || Type == fix_type::unknown)
+    {
+        return v_.try_as_monthyear(out);
+    }
+
 private:
     field_value v_{};
 };
@@ -630,9 +860,9 @@ private:
  */
 class field {
 public:
-    int tag() const { return tag_; }
+    int tag() const noexcept { return tag_; }
 
-    field_value const& value() const { return value_; }
+    field_value const& value() const noexcept { return value_; }
 
 private:
     friend class message_reader_const_iterator;
@@ -655,7 +885,7 @@ public:
     message_reader_const_iterator() = default;
 
 private:
-    message_reader_const_iterator(message_reader const&, char const* buffer)
+    message_reader_const_iterator(message_reader const&, char const* buffer) noexcept
         : buffer_(buffer), message_end_(nullptr), current_() {}
 
 public:
@@ -665,52 +895,52 @@ public:
     using pointer = field const*;
     using reference = field const&;
 
-    field const& operator*() const { return current_; }
+    field const& operator*() const noexcept { return current_; }
 
-    field const* operator->() const { return &current_; }
+    field const* operator->() const noexcept { return &current_; }
 
     /**
      * \brief Pointer to the first byte of the current field on the wire.
      */
-    char const* buffer_begin() const { return buffer_; }
+    char const* buffer_begin() const noexcept { return buffer_; }
 
     friend bool operator==(message_reader_const_iterator const& a,
-                           message_reader_const_iterator const& b) {
+                           message_reader_const_iterator const& b) noexcept {
         return a.buffer_ == b.buffer_;
     }
 
     friend bool operator!=(message_reader_const_iterator const& a,
-                           message_reader_const_iterator const& b) {
+                           message_reader_const_iterator const& b) noexcept {
         return a.buffer_ != b.buffer_;
     }
 
     friend bool operator<(message_reader_const_iterator const& a,
-                          message_reader_const_iterator const& b) {
+                          message_reader_const_iterator const& b) noexcept {
         return a.buffer_ < b.buffer_;
     }
 
     friend bool operator>(message_reader_const_iterator const& a,
-                          message_reader_const_iterator const& b) {
+                          message_reader_const_iterator const& b) noexcept {
         return a.buffer_ > b.buffer_;
     }
 
     friend bool operator<=(message_reader_const_iterator const& a,
-                           message_reader_const_iterator const& b) {
+                           message_reader_const_iterator const& b) noexcept {
         return a.buffer_ <= b.buffer_;
     }
 
     friend bool operator>=(message_reader_const_iterator const& a,
-                           message_reader_const_iterator const& b) {
+                           message_reader_const_iterator const& b) noexcept {
         return a.buffer_ >= b.buffer_;
     }
 
-    message_reader_const_iterator operator++(int) {
+    message_reader_const_iterator operator++(int) noexcept {
         message_reader_const_iterator i(*this);
         ++(*this);
         return i;
     }
 
-    message_reader_const_iterator& operator++() {
+    message_reader_const_iterator& operator++() noexcept {
         increment();
         return *this;
     }
@@ -719,7 +949,8 @@ public:
      * \brief Advance by `addend` fields.
      * \pre `addend >= 0`. Fires `NANOFIX_ASSERT` otherwise.
      */
-    friend message_reader_const_iterator operator+(message_reader_const_iterator a, int addend) {
+    friend message_reader_const_iterator operator+(message_reader_const_iterator a,
+                                                   int addend) noexcept {
         NANOFIX_ASSERT(addend >= 0,
                        "message_reader::const_iterator is a Forward Iterator, so only "
                        "positive addends are allowed.");
@@ -729,7 +960,8 @@ public:
         return a;
     }
 
-    friend message_reader_const_iterator operator+(int addend, message_reader_const_iterator a) {
+    friend message_reader_const_iterator operator+(int addend,
+                                                   message_reader_const_iterator a) noexcept {
         return a + addend;
     }
 
@@ -739,15 +971,15 @@ private:
     char const* message_end_ = nullptr;
     field current_;
 
-    void increment();
+    void increment() noexcept;
 };
 
 struct tag_equal {
-    tag_equal(int t) : tag(t) {}
+    explicit tag_equal(int t) noexcept : tag(t) {}
 
     int tag;
 
-    bool operator()(field const& v) const { return v.tag() == tag; }
+    bool operator()(field const& v) const noexcept { return v.tag() == tag; }
 };
 
 /**

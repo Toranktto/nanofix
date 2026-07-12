@@ -41,6 +41,7 @@ or implied, of T3 IP, LLC.
 #include <nanofix/detail/numeric.hpp>
 #include <nanofix/detail/reader.hpp>
 #include <nanofix/detail/simd.hpp>
+#include <nanofix/detail/time.hpp>
 #include <nanofix/detail/value_iter.hpp>
 #include <nanofix/detail/version.hpp>
 #include <nanofix/detail/writer.hpp>

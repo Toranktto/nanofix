@@ -17,12 +17,12 @@
 
 using nanofix_test::read_file;
 
-// ref_build_field_index is a verbatim copy of the original per-field
-// find_soh() loop (pre bulk-find_all_soh rewrite). The production
-// nanofix::build_field_index must produce byte-identical (tag, pos, len,
-// truncated) output over every fixture, including the embedded-SOH binary
-// fixture that exercises the data-length jump. If this diverges, the bulk
-// rewrite is wrong by default.
+// ref_build_field_index is an independent per-field find_soh() loop (no bulk
+// find_all_soh), kept in lockstep with the iterator's data-length semantics.
+// The production nanofix::build_field_index must produce byte-identical
+// (tag, pos, len, truncated) output over every fixture, including the
+// embedded-SOH binary fixture that exercises the data-length jump. If this
+// diverges, the bulk rewrite is wrong by default.
 namespace {
 
 struct RefIndex {
@@ -96,7 +96,9 @@ RefIndex ref_build_field_index(nanofix::message_reader const& r) {
             if (p >= stop)
                 break;
             ++p;
-            if (data_len > static_cast<std::size_t>(stop - p))
+            // Iterator semantics: the length must fit inside the body and be
+            // SOH-terminated, else the offset cannot be trusted.
+            if (data_len >= static_cast<std::size_t>(stop - p) || p[data_len] != '\x01')
                 break;
             char const* const dvb = p;
             char const* const dve = p + data_len;
@@ -154,6 +156,23 @@ TEST_P(BulkFramingDiffTest, MatchesPerFieldReference) {
         expect_index_matches_reference<8>(r, GetParam());
     }
     EXPECT_GT(complete, 0u) << path;
+}
+
+TEST(BulkFramingDiff, LyingDataLengthMatchesReference) {
+    // Declared data length lands mid-value (not SOH-terminated): both the
+    // reference and the bulk path must stop at the same field.
+    char const buf[] =
+        "8=FIX.4.2\x01"
+        "9=23\x01"
+        "35=A\x01"
+        "93=2\x01"
+        "89=abcd\x01"
+        "58=x\x01"
+        "10=000\x01";
+    nanofix::message_reader r(buf, buf + sizeof(buf) - 1);
+    ASSERT_TRUE(r.is_complete() && r.is_valid());
+    expect_index_matches_reference<2048>(r, "inline:lying-data-length");
+    expect_index_matches_reference<4>(r, "inline:lying-data-length");
 }
 
 INSTANTIATE_TEST_SUITE_P(SampleData,

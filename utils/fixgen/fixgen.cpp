@@ -1,5 +1,5 @@
 // Write N synthetic FIX 5.0 SP2 messages over FIXT 1.1 to <path>.
-//   fixgen -o <path> [-n count] [-s seed]
+//   fixgen -o <path> [-n count] [-s seed] [-r|--random-fields]
 // Output is wire-format (no newlines); pipe through fixprint to inspect.
 
 #include <nanofix.hpp>

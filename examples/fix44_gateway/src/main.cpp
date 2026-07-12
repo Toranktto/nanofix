@@ -98,8 +98,9 @@ void print_message(nanofix::message_reader const& r) {
         show("ExecID", f.find(nanofix::tag::ExecID));
         show("Symbol", f.find(nanofix::tag::Symbol));
 
-        if (auto side = f.find(nanofix::tag::Side))
-            std::printf("  %-12s = %c\n", "Side", side.as_char_unchecked());
+        char side_c = 0;
+        if (f.find(nanofix::tag::Side).try_as_char(side_c))
+            std::printf("  %-12s = %c\n", "Side", side_c);
 
         // Price is decimal: try_as_int would not compile here.
         long mant = 0, exp = 0;

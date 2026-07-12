@@ -315,7 +315,7 @@ TEST(NanofixTest, field_value_generic_try_as) {
     ASSERT_TRUE(it->value().try_as(sv));
     EXPECT_EQ(sv, "D");
 
-    // char: first byte; non-empty -> true.
+    // char: delegates to try_as_char; exactly one byte.
     ASSERT_TRUE(r.find_with_hint(tag::Symbol, it));
     char c = 0;
     ASSERT_TRUE(it->value().try_as(c));
@@ -929,6 +929,287 @@ TEST(NanofixTest, build_field_index_data_length) {
     EXPECT_EQ(idx.find_with_hint(tag::Symbol, h).as_string_view(), "AAPL");
 }
 
+TEST(NanofixTest, index_matches_iterator_on_lying_data_length) {
+    // SignatureLength (93) declares 2 but the Signature (89) value is 4 bytes:
+    // the declared offset lands mid-value and is not SOH-terminated. The
+    // iterator stops; the index must not resume mid-value and fabricate fields.
+    char const buf[] =
+        "8=FIX.4.2\x01"
+        "9=23\x01"
+        "35=A\x01"
+        "93=2\x01"
+        "89=abcd\x01"
+        "58=x\x01"
+        "10=000\x01";
+    message_reader r(buf, buf + sizeof(buf) - 1);
+    ASSERT_TRUE(r.is_complete() && r.is_valid());
+
+    std::vector<int> iter_tags;
+    for (auto it = r.begin(); it != r.end(); ++it)
+        iter_tags.push_back(it->tag());
+
+    field_index_buffer<32> ib;
+    auto idx = build_field_index(r, ib);
+    ASSERT_EQ(idx.field_count(), iter_tags.size());
+    for (std::size_t i = 0; i < iter_tags.size(); ++i)
+        EXPECT_EQ(idx.tag_at(i), iter_tags[i]);
+}
+
+TEST(NanofixTest, data_field_must_terminate_before_trailer) {
+    // 93 declares 9: the SOH probe byte p[9] is the message's final SOH,
+    // inside the trailer. A data value crossing the trailer must stop
+    // iteration, not yield a field spanning "10=...".
+    char const buf[] =
+        "8=FIX.4.2\x01"
+        "9=16\x01"
+        "35=A\x01"
+        "93=9\x01"
+        "89=ab\x01"
+        "10=000\x01";
+    message_reader r(buf, buf + sizeof(buf) - 1);
+    ASSERT_TRUE(r.is_complete() && r.is_valid());
+    char const* const trailer = r.end().buffer_begin();
+    std::size_t n = 0;
+    for (auto it = r.begin(); it != r.end(); ++it, ++n)
+        EXPECT_LE(it->value().end(), trailer) << "field value crosses into the trailer";
+    EXPECT_EQ(n, 1u);  // MsgType only; the lying data field stops iteration
+}
+
+TEST(NanofixTest, push_back_decimal_positive_exponent_scales) {
+    auto emit = [](long mantissa, long exponent) {
+        char buf[64];
+        message_writer w(buf, sizeof(buf));
+        w.push_back_decimal(44, mantissa, exponent);
+        EXPECT_TRUE(w.ok());
+        return std::string(w.message_begin(), w.message_end());
+    };
+    EXPECT_EQ(emit(5, 2), "44=500\x01");
+    EXPECT_EQ(emit(-5, 2), "44=-500\x01");
+    EXPECT_EQ(emit(0, 3), "44=0\x01");
+    EXPECT_EQ(emit(12345, 1), "44=123450\x01");
+    EXPECT_EQ(emit(5, 0), "44=5\x01");
+    EXPECT_EQ(emit(50001, -2), "44=500.01\x01");
+}
+
+TEST(NanofixTest, push_back_decimal_positive_exponent_overflow_errors) {
+    char buf[32];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_decimal(44, 5L, 1000000L);  // 1e6 zeros cannot fit
+    EXPECT_FALSE(w.ok());
+    EXPECT_EQ(w.message_size(), 0u);
+}
+
+TEST(NanofixTest, generic_try_as_time_types) {
+    using namespace std::chrono;
+    auto v = [](char const* s) { return field_value(s, s + std::strlen(s)); };
+
+    sys_time<milliseconds> tp;
+    ASSERT_TRUE(v("20260712-12:30:05.250").try_as(tp));
+    EXPECT_EQ(
+        tp, sys_days{year{2026} / 7 / 12} + hours{12} + minutes{30} + seconds{5} + milliseconds{250});
+
+    sys_time<nanoseconds> tpn;
+    ASSERT_TRUE(v("20260712-12:30:05.123456789").try_as(tpn));
+    EXPECT_EQ(tpn.time_since_epoch() % seconds{1}, nanoseconds{123456789});
+
+    // Policy: sub-ms wire into an ms-precision target rejects, never truncates.
+    EXPECT_FALSE(v("20260712-12:30:05.123456789").try_as(tp));
+    // try_as is fully validating: digits, separators, calendar ranges.
+    EXPECT_FALSE(v("2026071X-12:30:05").try_as(tp));
+    EXPECT_FALSE(v("20260712T12:30:05").try_as(tp));
+    EXPECT_FALSE(v("20260712-25:30:05").try_as(tp));
+    EXPECT_FALSE(v("20260712-12:61:05").try_as(tp));
+    EXPECT_FALSE(v("20261312-12:30:05").try_as(tp));
+
+    nanoseconds dur{};
+    ASSERT_TRUE(v("12:30:05.250").try_as(dur));
+    EXPECT_EQ(dur, hours{12} + minutes{30} + seconds{5} + milliseconds{250});
+    EXPECT_FALSE(v("12-30-05").try_as(dur));
+    EXPECT_FALSE(v("12:3X:05").try_as(dur));
+    milliseconds dur_ms{};
+    ASSERT_TRUE(v("23:59:60").try_as(dur_ms));  // leap second passes
+    EXPECT_FALSE(v("24:00:00").try_as(dur_ms));
+
+    year_month_day ymd{};
+    ASSERT_TRUE(v("20260712").try_as(ymd));
+    EXPECT_EQ(ymd, year{2026} / 7 / 12);
+    EXPECT_FALSE(v("20261312").try_as(ymd));  // month 13
+    EXPECT_FALSE(v("2026071").try_as(ymd));   // short
+    EXPECT_FALSE(v("2026071X").try_as(ymd));  // non-digit
+
+    year_month ym{};
+    ASSERT_TRUE(v("202607").try_as(ym));
+    EXPECT_EQ(ym, year{2026} / 7);
+    EXPECT_FALSE(v("202613").try_as(ym));
+}
+
+TEST(NanofixTest, named_chrono_try_as_methods) {
+    using namespace std::chrono;
+    auto v = [](char const* s) { return field_value(s, s + std::strlen(s)); };
+
+    sys_time<milliseconds> tp;
+    ASSERT_TRUE(v("20260712-12:30:05.250").try_as_timestamp(tp));
+    EXPECT_EQ(
+        tp, sys_days{year{2026} / 7 / 12} + hours{12} + minutes{30} + seconds{5} + milliseconds{250});
+    EXPECT_FALSE(v("2026071X-12:30:05").try_as_timestamp(tp));
+
+    nanoseconds dur{};
+    ASSERT_TRUE(v("12:30:05.250").try_as_timeonly(dur));
+    EXPECT_EQ(dur, hours{12} + minutes{30} + seconds{5} + milliseconds{250});
+    EXPECT_FALSE(v("12:3X:05").try_as_timeonly(dur));
+
+    year_month_day ymd{};
+    ASSERT_TRUE(v("20260712").try_as_date(ymd));
+    EXPECT_EQ(ymd, year{2026} / 7 / 12);
+    EXPECT_FALSE(v("20261312").try_as_date(ymd));
+
+    year_month ym{};
+    ASSERT_TRUE(v("202607").try_as_monthyear(ym));
+    EXPECT_EQ(ym, year{2026} / 7);
+    EXPECT_FALSE(v("202613").try_as_monthyear(ym));
+}
+
+TEST(NanofixTest, generic_as_unchecked_time_types) {
+    using namespace std::chrono;
+    auto v = [](char const* s) { return field_value(s, s + std::strlen(s)); };
+
+    auto tp = v("20260712-12:30:05.250").as_unchecked<sys_time<milliseconds>>();
+    EXPECT_EQ(
+        tp, sys_days{year{2026} / 7 / 12} + hours{12} + minutes{30} + seconds{5} + milliseconds{250});
+
+    auto dur = v("12:30:05").as_unchecked<nanoseconds>();
+    EXPECT_EQ(dur, hours{12} + minutes{30} + seconds{5});
+
+    auto ymd = v("20260712").as_unchecked<year_month_day>();
+    EXPECT_EQ(ymd, year{2026} / 7 / 12);
+
+    auto ym = v("202607").as_unchecked<year_month>();
+    EXPECT_EQ(ym, year{2026} / 7);
+}
+
+TEST(NanofixTest, group_for_each_returns_visited_entry_count) {
+    char buf[256];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_header("FIX.4.2");
+    w.push_back_string(tag::MsgType, "W");
+    w.push_back_int(tag::NoMDEntries, 3);  // declared 3, only 2 on the wire
+    w.push_back_char(tag::MDEntryType, '0');
+    w.push_back_decimal(tag::MDEntryPx, 10000L, -2L);
+    w.push_back_char(tag::MDEntryType, '1');
+    w.push_back_decimal(tag::MDEntryPx, 10050L, -2L);
+    ASSERT_TRUE(w.push_back_trailer());
+    message_reader r(w);
+    ASSERT_TRUE(r.is_complete() && r.is_valid());
+
+    auto g = r.group(tag::NoMDEntries, tag::MDEntryType);
+    EXPECT_EQ(g.size(), 3u);  // declared count
+    std::size_t const visited = g.for_each([](group_entry const&) {});
+    EXPECT_EQ(visited, 2u);  // actual — count mismatch is now detectable
+}
+
+TEST(NanofixTest, push_back_bool) {
+    char buf[64];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_bool(tag::PossDupFlag, true);
+    w.push_back_bool(tag::PossDupFlag, false);
+    ASSERT_TRUE(w.ok());
+    EXPECT_EQ(std::string(w.message_begin(), w.message_end()),
+              "43=Y\x01"
+              "43=N\x01");
+}
+
+TEST(NanofixTest, push_back_data_string_view) {
+    char buf[64];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_data(tag::SignatureLength,
+                     tag::Signature,
+                     std::string_view("ab\x01"
+                                      "cd",
+                                      5));
+    ASSERT_TRUE(w.ok());
+    EXPECT_EQ(std::string(w.message_begin(), w.message_end()),
+              "93=5\x01"
+              "89=ab\x01"
+              "cd\x01");
+}
+
+TEST(NanofixTest, writer_rejects_out_of_range_date_time_parts) {
+    auto emits_error = [](auto&& fn) {
+        char buf[64];
+        message_writer w(buf, sizeof(buf));
+        fn(w);
+        return !w.ok() && w.message_size() == 0;
+    };
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 10000, 1, 2); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, -1, 1, 2); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 13, 2); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 0, 2); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_date(75, 2026, 1, 32); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_monthyear(200, 2026, 13); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_timeonly(273, 24, 0, 0); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_timeonly(273, 12, 60, 0); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_timeonly(273, 12, 0, 61); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) { w.push_back_timeonly(273, 12, 0, 0, 1000); }));
+    EXPECT_TRUE(
+        emits_error([](message_writer& w) { w.push_back_timestamp(52, 10000, 1, 2, 3, 4, 5); }));
+    EXPECT_TRUE(emits_error([](message_writer& w) {
+        w.push_back_timestamp_nano(60, 2026, 1, 2, 3, 4, 5, 1000000000);
+    }));
+}
+
+TEST(NanofixTest, writer_accepts_leap_second_and_valid_parts) {
+    char buf[64];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_timeonly(273, 23, 59, 60);  // leap second is legal FIX
+    ASSERT_TRUE(w.ok());
+    EXPECT_EQ(std::string(w.message_begin(), w.message_end()), "273=23:59:60\x01");
+}
+
+TEST(NanofixTest, writer_epoch_timestamp_out_of_range_sets_error) {
+    char buf[64];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_timestamp_epoch_millis(52, 253'402'300'800'000LL);  // year 10000
+    EXPECT_FALSE(w.ok());
+    EXPECT_EQ(w.message_size(), 0u);
+}
+
+TEST(NanofixTest, try_as_string_view_false_on_missed_lookup) {
+    char buf[256];
+    message_writer w(buf, sizeof(buf));
+    w.push_back_header("FIX.4.2");
+    w.push_back_string(tag::MsgType, "D");
+    w.push_back_string(tag::Text, "");  // present but empty value
+    ASSERT_TRUE(w.push_back_trailer());
+    message_reader r(w);
+    ASSERT_TRUE(r.is_complete() && r.is_valid());
+
+    iter_fields f(r);
+    std::string_view sv = "sentinel";
+    EXPECT_FALSE(f.find(tag::Account).value().try_as(sv));  // miss
+    EXPECT_EQ(sv, "sentinel");                              // out-param untouched
+
+    EXPECT_TRUE(f.find(tag::Text).value().try_as(sv));  // hit, empty value
+    EXPECT_TRUE(sv.empty());
+}
+
+TEST(NanofixTest, push_back_string_reversed_range_sets_error) {
+    char buf[64];
+    message_writer w(buf, sizeof(buf));
+    char const s[] = "ABC";
+    w.push_back_string(55, s + 3, s);  // end < begin
+    EXPECT_FALSE(w.ok());
+    EXPECT_EQ(w.message_size(), 0u);
+}
+
+TEST(NanofixTest, push_back_header_reversed_range_sets_error) {
+    char buf[64];
+    message_writer w(buf, sizeof(buf));
+    char const s[] = "FIX.4.2";
+    w.push_back_header(s + 7, s);  // end < begin
+    EXPECT_FALSE(w.ok());
+    EXPECT_EQ(w.message_size(), 0u);
+}
+
 TEST(NanofixTest, chrono) {
     using namespace std::chrono;
     using TimePoint = time_point<system_clock, milliseconds>;
@@ -1502,7 +1783,9 @@ TEST(NanofixTest, indexed_group_entry_lookup) {
         std::size_t hh1 = 0;
         auto type_field = idx.find_with_hint(tag::MDEntryType, hh1);  // char-enum
         ASSERT_FALSE(type_field.empty());
-        EXPECT_EQ(type_field.as_char_unchecked(), char('0' + seen));
+        char entry_type = 0;
+        ASSERT_TRUE(type_field.try_as_char(entry_type));
+        EXPECT_EQ(entry_type, char('0' + seen));
 
         long m = 0, e = 0;
         std::size_t hh2 = 0;

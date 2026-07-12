@@ -178,7 +178,7 @@ TEST(StateMachineCorruption, raw_data_length_overshoots_buffer) {
 }
 
 TEST(StateMachineCorruption, raw_data_length_negative_like) {
-    // Negative-looking length ('-' rejected by atou, becomes 0).
+    // Negative-looking length: '-' fails try_atou, so iteration stops at that field.
     char const buf[] =
         "8=FIX.4.2\x01"
         "9=00000030\x01"
@@ -256,6 +256,103 @@ TEST(StateMachineCorruption, body_length_with_leading_zeros_overflow) {
         "10=000\x01";
     auto o = probe(buf, sizeof(buf) - 1);
     EXPECT_FALSE(o.complete);
+}
+
+TEST(StateMachineCorruption, incomplete_reader_accessors_are_guarded) {
+    // A routine partial recv(): frame cut mid-body. Every accessor with an
+    // is_valid() precondition must also reject a merely-incomplete reader
+    // (assert + safe return), not walk null iterator internals.
+    char const buf[] =
+        "8=FIX.4.2\x01"
+        "9=100\x01"
+        "35=D\x01"
+        "49=ALI";
+    message_reader r(buf, buf + sizeof(buf) - 1);
+    ASSERT_FALSE(r.is_complete());
+    ASSERT_TRUE(r.is_valid());  // merely incomplete, not malformed
+
+    reset_assert_failure_count();
+    EXPECT_TRUE(r.begin() == r.end());
+    EXPECT_EQ(r.message_size(), 0u);
+    EXPECT_EQ(r.message_end(), r.buffer_begin());
+    EXPECT_EQ(r.calculate_check_sum(), 0u);
+    EXPECT_EQ(assert_failure_count(), 5u);  // begin, end, size, end-ptr, checksum
+    reset_assert_failure_count();
+}
+
+TEST(StateMachineCorruption, indexed_paths_on_incomplete_message_are_safe) {
+    char const buf[] =
+        "8=FIX.4.2\x01"
+        "9=100\x01"
+        "35=D\x01"
+        "49=ALI";
+    message_reader r(buf, buf + sizeof(buf) - 1);
+    ASSERT_FALSE(r.is_complete());
+
+    reset_assert_failure_count();
+    field_index_buffer<32> idx;
+    auto im = build_field_index(r, idx);
+    EXPECT_EQ(im.field_count(), 0u);
+    EXPECT_FALSE(im.truncated());
+
+    iter_fields f(r);
+    EXPECT_TRUE(f.find(49).empty());
+
+    with_fields(r, idx, [](auto& fields) { EXPECT_TRUE(fields.find(49).empty()); });
+    EXPECT_EQ(assert_failure_count(), 0u);
+}
+
+TEST(StateMachineCorruption, garbage_prefix_is_invalid_not_a_message) {
+    // SOH positions line up with the BodyLength lie, but the first field is
+    // not "8=". Must classify invalid (and resync), not parse as MsgType A.
+    char const buf[] =
+        "XY_JUNK_Z\x01"
+        "9=5\x01"
+        "35=A\x01"
+        "10=123\x01";
+    message_reader r(buf, buf + sizeof(buf) - 1);
+    ASSERT_TRUE(r.is_complete());
+    EXPECT_FALSE(r.is_valid());
+    EXPECT_EQ(r.error(), parse_error::begin_string_tag_missing);
+}
+
+TEST(StateMachineCorruption, trailer_without_checksum_tag_is_invalid) {
+    // SOH positions line up, but the trailer field is 99=, not 10=.
+    char const buf[] =
+        "8=FIX.4.2\x01"
+        "9=5\x01"
+        "35=A\x01"
+        "99=123\x01";
+    message_reader r(buf, buf + sizeof(buf) - 1);
+    ASSERT_TRUE(r.is_complete());
+    EXPECT_FALSE(r.is_valid());
+    EXPECT_EQ(r.error(), parse_error::checksum_tag_missing);
+}
+
+TEST(StateMachineCorruption, tag_350_is_not_msg_type) {
+    // Tags 350-359 share the '3','5' prefix; the '=' must be verified too.
+    char const buf[] =
+        "8=FIX.4.2\x01"
+        "9=6\x01"
+        "350=A\x01"
+        "10=123\x01";
+    message_reader r(buf, buf + sizeof(buf) - 1);
+    ASSERT_TRUE(r.is_complete());
+    EXPECT_FALSE(r.is_valid());
+    EXPECT_EQ(r.error(), parse_error::msg_type_tag_missing);
+}
+
+TEST(StateMachineCorruption, tag_90_is_not_body_length) {
+    // Tag 90 after BeginString is a missing BodyLength tag, not non-numeric
+    // BodyLength content.
+    char const buf[] =
+        "8=FIX.4.2\x01"
+        "90=abc\x01"
+        "35=D\x01"
+        "10=000\x01";
+    message_reader r(buf, buf + sizeof(buf) - 1);
+    EXPECT_FALSE(r.is_valid());
+    EXPECT_EQ(r.error(), parse_error::body_length_tag_missing);
 }
 
 TEST(StateMachineCorruption, indexed_path_on_corrupt_message_is_safe) {

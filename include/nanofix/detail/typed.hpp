@@ -5,11 +5,21 @@
 namespace nanofix {
 
 /// FIX value-type category a tag belongs to, used to gate typed_value accessors.
-enum class fix_type : std::uint8_t { decimal, integer, string, character, timestamp, unknown };
+enum class fix_type : std::uint8_t {
+    decimal,
+    integer,
+    string,
+    character,
+    timestamp,
+    timeonly,
+    date,
+    monthyear,
+    unknown
+};
 
 /// Compile-time tag handle carrying its number and value-type category. The
 /// generated `tag::` namespace (fields.hpp) is made of these. The implicit
-/// `operator int()` keeps every int-context use (`push_back_int(tag::Price, …)`,
+/// `operator int()` keeps every int-context use (`push_back_decimal(tag::Price, …)`,
 /// `it->tag() == tag::Price`, `group(tag::NoMDEntries, …)`) working unchanged,
 /// while `find(tag::Price)` resolves to the typed overload and returns a
 /// `typed_value`.
